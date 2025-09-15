@@ -723,12 +723,6 @@ async def _rclone_cc_render_browse(client, cb_or_msg, which: str, include_files:
     data = state.get('data', {})
     base_path = data.get(f'{which}_path', '')
     remote = data.get(f'{which}_remote')
-    if not remote:
-        return await edit_message(
-            cb_or_msg.message if isinstance(cb_or_msg, CallbackQuery) else cb_or_msg,
-            "❌ **Session Expired**\n\nThis interactive session has expired, likely due to a bot restart. Please start the operation again.",
-            rclone_buttons()
-        )
     try:
         dirs, files = await _rclone_cc_list(remote, base_path, include_files)
     except Exception as e:
