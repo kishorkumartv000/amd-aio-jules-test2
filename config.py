@@ -22,9 +22,7 @@ class Config:
                                                                              # Admin IDs (space or comma separated ints)
 
     # Database Configuration
-    DATABASE_URL      = getenv("DATABASE_URL")                            # PostgreSQL or MongoDB URL
-    DATABASE_TYPE     = getenv("DATABASE_TYPE", "postgres").lower()       # 'postgres' or 'mongodb'
-    MONGODB_DATABASE  = getenv("MONGODB_DATABASE", None)                    # Optional: a specific database name for MongoDB
+    DATABASE_URL      = getenv("DATABASE_URL")                            # PostgreSQL URL (e.g. "postgresql://user:pass@host:port/db")
 
     # Working Directory
     UPLOAD_MODE       = getenv("UPLOAD_MODE", "Telegram")                  # Telegram, RCLONE, or Local
