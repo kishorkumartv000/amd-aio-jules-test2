@@ -579,11 +579,18 @@ async def _post_rclone_manage_button(user, remote_info: dict):
         }
 
         # Save the session to the database
-        rclone_sessions_db.add_session(
-            token=token,
-            user_id=user['user_id'],
-            context=context
-        )
+        try:
+            LOGGER.info("Attempting to save rclone session to the database...")
+            rclone_sessions_db.add_session(
+                token=token,
+                user_id=user['user_id'],
+                context=context
+            )
+            LOGGER.info("Successfully saved rclone session to the database.")
+        except Exception as db_error:
+            LOGGER.critical(f"DATABASE ERROR while saving rclone session: {db_error}", exc_info=True)
+            await send_message(user, f"CRITICAL: Could not save rclone session to DB. Error: {db_error}")
+            return
 
         # Button to open manage UI, with the token in the callback
         kb = InlineKeyboardMarkup([
@@ -592,7 +599,7 @@ async def _post_rclone_manage_button(user, remote_info: dict):
         await send_message(user, "Manage the uploaded item:", markup=kb)
     except Exception as e:
         try:
-            LOGGER.error(f"Failed to create rclone manage button: {e}", exc_info=True)
+            LOGGER.error(f"General error in _post_rclone_manage_button: {e}", exc_info=True)
             await send_message(user, "Note: manage button unavailable.")
         except Exception:
             pass
