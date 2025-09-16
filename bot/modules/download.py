@@ -16,6 +16,8 @@ from ..providers.apple import start_apple
 # IMPORT EDIT_MESSAGE HERE:
 from ..helpers.message import send_message, antiSpam, check_user, fetch_user_details, edit_message
 from ..helpers.state import conversation_state
+from ..helpers.progress import ProgressReporter
+from ..helpers.status import start_status_updater, stop_status_updater
 
 
 @Client.on_message(filters.command(CMD.DOWNLOAD))
@@ -90,24 +92,33 @@ async def download_track(c, msg: Message):
                     u = dict(user)
                     u['task_id'] = state.task_id
                     u['cancel_event'] = state.cancel_event
-                    u['bot_msg'] = await send_message(msg, f"Starting download…\nUse /cancel <code>{state.task_id}</code> to stop.")
-                    await send_message(u, f"Task ID:\n<code>{state.task_id}</code>")
+                    u['bot_msg'] = await send_message(msg, f"Queued task {state.task_id[:5]} is starting...")
+
+                    # Create a reporter and start the periodic updater
+                    reporter = ProgressReporter(label=f"DL • {state.task_id[:5]}")
+                    u['progress'] = reporter
+                    await start_status_updater(u['task_id'], reporter, u['bot_msg'])
+
                     try:
                         await start_link(link, u, options)
-                        await send_message(u, lang.s.TASK_COMPLETED)
                     except asyncio.CancelledError:
-                        await send_message(u, "⏹️ Task cancelled")
+                        await edit_message(u['bot_msg'], "⏹️ Task cancelled")
                     except Exception as e:
-                        LOGGER.error(f"Download failed: {e}")
+                        LOGGER.error(f"Download failed: {e}", exc_info=True)
                         error_msg = f"Download failed: {str(e)}"
-                        await send_message(u, error_msg)
-                    try:
-                        await c.delete_messages(msg.chat.id, u['bot_msg'].id)
-                    except Exception:
-                        pass
-                    await cleanup(u)
-                    await task_manager.finish(state.task_id, status="cancelled" if state.cancel_event.is_set() else "done")
-                    await antiSpam(msg.from_user.id, msg.chat.id, True)
+                        await edit_message(u['bot_msg'], error_msg)
+                    finally:
+                        # Crucially, stop the status updater to prevent it from running forever
+                        await stop_status_updater(u['task_id'])
+                        await cleanup(u)
+                        await task_manager.finish(state.task_id, status="cancelled" if state.cancel_event.is_set() else "done")
+                        await antiSpam(msg.from_user.id, msg.chat.id, True)
+                        # Keep the final status message for a bit before deleting
+                        await asyncio.sleep(10)
+                        try:
+                            await c.delete_messages(msg.chat.id, u['bot_msg'].id)
+                        except Exception:
+                            pass
 
                 qid, pos = await task_manager.enqueue(user['user_id'], link, options, _job)
                 await send_message(user, f"✅ Added to queue. ID: <code>{qid}</code>\nPosition: {pos}")
@@ -117,21 +128,34 @@ async def download_track(c, msg: Message):
             state = await task_manager.create(user, label="Download")
             user['task_id'] = state.task_id
             user['cancel_event'] = state.cancel_event
-            user['bot_msg'] = await send_message(msg, f"Starting download…\nUse /cancel <code>{state.task_id}</code> to stop.")
-            await send_message(user, f"Task ID:\n<code>{state.task_id}</code>")
+            user['bot_msg'] = await send_message(msg, "Preparing...")
+
+            # Create a reporter and start the periodic updater
+            reporter = ProgressReporter(label=f"DL • {state.task_id[:5]}")
+            user['progress'] = reporter
+            await start_status_updater(user['task_id'], reporter, user['bot_msg'])
+
             try:
                 await start_link(link, user, options)
-                await send_message(user, lang.s.TASK_COMPLETED)
+                # Final message is sent by the uploader now, so no need for one here
             except asyncio.CancelledError:
-                await send_message(user, "⏹️ Task cancelled")
+                await edit_message(user['bot_msg'], "⏹️ Task cancelled")
             except Exception as e:
-                LOGGER.error(f"Download failed: {e}")
+                LOGGER.error(f"Download failed: {e}", exc_info=True)
                 error_msg = f"Download failed: {str(e)}"
-                await send_message(user, error_msg)
-            await c.delete_messages(msg.chat.id, user['bot_msg'].id)
-            await cleanup(user)  # deletes uploaded files
-            await task_manager.finish(state.task_id, status="cancelled" if state.cancel_event.is_set() else "done")
-            await antiSpam(msg.from_user.id, msg.chat.id, True)
+                await edit_message(user['bot_msg'], error_msg)
+            finally:
+                # Crucially, stop the status updater to prevent it from running forever
+                await stop_status_updater(user['task_id'])
+                await cleanup(user)  # deletes uploaded files
+                await task_manager.finish(state.task_id, status="cancelled" if state.cancel_event.is_set() else "done")
+                await antiSpam(msg.from_user.id, msg.chat.id, True)
+                # Keep the final status message for a bit before deleting
+                await asyncio.sleep(10)
+                try:
+                    await c.delete_messages(msg.chat.id, user['bot_msg'].id)
+                except Exception:
+                    pass
 
 
 def parse_options(parts: list) -> dict:
@@ -247,23 +271,30 @@ async def apple_flag_select_cb(c, cb):
                 u = dict(user)
                 u['task_id'] = state.task_id
                 u['cancel_event'] = state.cancel_event
-                u['bot_msg'] = await send_message(cb.message, f"Starting download…\nUse /cancel <code>{state.task_id}</code> to stop.")
-                await send_message(u, f"Task ID:\n<code>{state.task_id}</code>")
+                u['bot_msg'] = await send_message(cb.message, f"Queued task {state.task_id[:5]} is starting...")
+
+                # Create a reporter and start the periodic updater
+                reporter = ProgressReporter(label=f"DL • {state.task_id[:5]}")
+                u['progress'] = reporter
+                await start_status_updater(u['task_id'], reporter, u['bot_msg'])
+
                 try:
                     await start_link(link, u, options)
-                    await send_message(u, lang.s.TASK_COMPLETED)
                 except asyncio.CancelledError:
-                    await send_message(u, "⏹️ Task cancelled")
+                    await edit_message(u['bot_msg'], "⏹️ Task cancelled")
                 except Exception as e:
-                    LOGGER.error(f"Download failed: {e}")
-                    await send_message(u, f"Download failed: {str(e)}")
-                try:
-                    await c.delete_messages(cb.message.chat.id, u['bot_msg'].id)
-                except Exception:
-                    pass
-                await cleanup(u)
-                await task_manager.finish(state.task_id, status="cancelled" if state.cancel_event.is_set() else "done")
-                await antiSpam(cb.from_user.id, cb.message.chat.id, True)
+                    LOGGER.error(f"Download failed: {e}", exc_info=True)
+                    await edit_message(u['bot_msg'], f"Download failed: {str(e)}")
+                finally:
+                    await stop_status_updater(u['task_id'])
+                    await cleanup(u)
+                    await task_manager.finish(state.task_id, status="cancelled" if state.cancel_event.is_set() else "done")
+                    await antiSpam(cb.from_user.id, cb.message.chat.id, True)
+                    await asyncio.sleep(10)
+                    try:
+                        await c.delete_messages(cb.message.chat.id, u['bot_msg'].id)
+                    except Exception:
+                        pass
 
             qid, pos = await task_manager.enqueue(user['user_id'], link, options, _job)
             await send_message(cb.message, f"✅ Added to queue. ID: <code>{qid}</code>\nPosition: {pos}")
@@ -273,20 +304,30 @@ async def apple_flag_select_cb(c, cb):
         state = await task_manager.create(user, label="Download")
         user['task_id'] = state.task_id
         user['cancel_event'] = state.cancel_event
-        user['bot_msg'] = await send_message(cb.message, f"Starting download…\nUse /cancel <code>{state.task_id}</code> to stop.")
-        await send_message(user, f"Task ID:\n<code>{state.task_id}</code>")
+        user['bot_msg'] = await send_message(cb.message, "Preparing...")
+
+        # Create a reporter and start the periodic updater
+        reporter = ProgressReporter(label=f"DL • {state.task_id[:5]}")
+        user['progress'] = reporter
+        await start_status_updater(user['task_id'], reporter, user['bot_msg'])
+
         try:
             await start_link(link, user, options)
-            await send_message(user, lang.s.TASK_COMPLETED)
         except asyncio.CancelledError:
-            await send_message(user, "⏹️ Task cancelled")
+            await edit_message(user['bot_msg'], "⏹️ Task cancelled")
         except Exception as e:
-            LOGGER.error(f"Download failed: {e}")
-            await send_message(user, f"Download failed: {str(e)}")
-        await c.delete_messages(cb.message.chat.id, user['bot_msg'].id)
-        await cleanup(user)
-        await task_manager.finish(state.task_id, status="cancelled" if state.cancel_event.is_set() else "done")
-        await antiSpam(cb.from_user.id, cb.message.chat.id, True)
+            LOGGER.error(f"Download failed: {e}", exc_info=True)
+            await edit_message(user['bot_msg'], f"Download failed: {str(e)}")
+        finally:
+            await stop_status_updater(user['task_id'])
+            await cleanup(user)
+            await task_manager.finish(state.task_id, status="cancelled" if state.cancel_event.is_set() else "done")
+            await antiSpam(cb.from_user.id, cb.message.chat.id, True)
+            await asyncio.sleep(10)
+            try:
+                await c.delete_messages(cb.message.chat.id, user['bot_msg'].id)
+            except Exception:
+                pass
     except Exception:
         try:
             await conversation_state.clear(cb.from_user.id)
