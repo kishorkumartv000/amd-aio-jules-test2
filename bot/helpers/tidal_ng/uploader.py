@@ -88,20 +88,28 @@ async def _rclone_upload(user, path, base_path):
         rel_path = os.path.basename(abs_path)
 
     # Correctly determine source and destination for rclone
-    # This logic mirrors the working implementation from the Apple Music uploader.
+    # For both files and dirs, we want to copy the item *into* the destination.
+    # To preserve the subfolder structure (e.g., "Albums/..."), we should
+    # copy the parent of the relative path.
+    # For rclone, the source should be a directory.
     if is_dir:
-        # For a directory, the source is the directory itself.
-        # The destination is the remote path including the directory's name.
+        # If path is a directory, copy the directory itself.
         source_for_copy = abs_path
-        dest_path = f"{dest_root}/{rel_path}".rstrip('/')
-        copy_cmd = f'rclone copy -v --create-empty-src-dirs --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
+        # The destination is the remote path that will contain the copied directory.
+        dest_path = f"{dest_root}/{os.path.dirname(rel_path)}".rstrip('/')
     else:
-        # For a single file, the source is the file itself.
-        # The destination is the remote path that will contain the file.
-        parent_dir = os.path.dirname(rel_path)
-        source_for_copy = abs_path
-        dest_path = f"{dest_root}/{parent_dir}".rstrip('/')
-        copy_cmd = f'rclone copy -v --create-empty-src-dirs --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
+        # If path is a single file, we still copy its parent directory,
+        # but use an --include filter to only upload the single file.
+        # This preserves the folder structure on the remote.
+        source_for_copy = os.path.dirname(abs_path)
+        dest_path = f"{dest_root}/{os.path.dirname(rel_path)}".rstrip('/')
+
+    # Add verbose flag and include filter for single files
+    copy_cmd = f'rclone copy -v --create-empty-src-dirs --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
+    if not is_dir:
+        # Ensure we only copy the intended file, not everything in the source directory
+        file_name = os.path.basename(abs_path)
+        copy_cmd += f" --include \"{file_name}\""
 
     proc = await asyncio.create_subprocess_shell(
         copy_cmd,
