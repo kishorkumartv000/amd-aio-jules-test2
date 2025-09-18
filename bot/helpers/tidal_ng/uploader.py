@@ -71,10 +71,11 @@ async def create_tidal_ng_zip(directory: str, user_id: int, metadata: dict) -> s
     return zip_path
 
 
-async def _rclone_upload(user, path, base_path):
+async def _rclone_upload(user, path, base_path, quality: str | None = None):
     """
-    Uploads files/folders to Rclone, respecting the original subfolder structure.
+    Uploads files/folders to Rclone with quality-based subdirectories.
     - Fixes single track uploads.
+    - Adds quality subfolder.
     - Adds verbose logging.
     """
     dest_root = (getattr(bot_set, 'rclone_dest', None) or Config.RCLONE_DEST)
@@ -91,22 +92,26 @@ async def _rclone_upload(user, path, base_path):
     except Exception:
         rel_path = os.path.basename(abs_path)
 
+    # Prepend quality folder if quality is provided
+    if quality:
+        # Sanitize quality string for use as a folder name
+        safe_quality = quality.replace(" ", "_").replace("/", "_")
+        final_rel_path = os.path.join(safe_quality, rel_path)
+    else:
+        final_rel_path = rel_path
+
     # Correctly determine source and destination for rclone
-    # For both files and dirs, we want to copy the item *into* the destination.
-    # To preserve the subfolder structure (e.g., "Albums/..."), we should
-    # copy the parent of the relative path.
-    # For rclone, the source should be a directory.
     if is_dir:
         # If path is a directory, copy the directory itself.
         source_for_copy = abs_path
-        # The destination is the remote path that will contain the copied directory.
-        dest_path = f"{dest_root}/{os.path.dirname(rel_path)}".rstrip('/')
+        # The destination is the remote path including the new quality folder.
+        dest_path = f"{dest_root}/{os.path.dirname(final_rel_path)}".rstrip('/')
     else:
-        # If path is a single file, we still copy its parent directory,
-        # but use an --include filter to only upload the single file.
-        # This preserves the folder structure on the remote.
+        # If path is a single file, copy the file's parent directory
+        # but use --include to only upload the single file. This preserves structure.
         source_for_copy = os.path.dirname(abs_path)
-        dest_path = f"{dest_root}/{os.path.dirname(rel_path)}".rstrip('/')
+        # The destination is the remote path including the new quality folder and subfolders.
+        dest_path = f"{dest_root}/{os.path.dirname(final_rel_path)}".rstrip('/')
 
     # Add verbose flag and include filter for single files
     copy_cmd = f'rclone copy -v --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
@@ -114,6 +119,7 @@ async def _rclone_upload(user, path, base_path):
         # Ensure we only copy the intended file, not everything in the source directory
         file_name = os.path.basename(abs_path)
         copy_cmd += f" --include \"{file_name}\""
+
 
     proc = await asyncio.create_subprocess_shell(
         copy_cmd,
@@ -125,11 +131,11 @@ async def _rclone_upload(user, path, base_path):
         LOGGER.error(f"Rclone copy failed for '{source_for_copy}'.\nCMD: {copy_cmd}\nOutput:\n{err.decode().strip()}")
         return None, None, None
 
-    # Link generation
+    # Link generation needs to use the final relative path
     rclone_link = None
     index_link = None
     if bot_set.link_options in ['RCLONE', 'Both']:
-        link_target = f"{dest_root}/{rel_path}".rstrip('/')
+        link_target = f"{dest_root}/{final_rel_path}".rstrip('/')
         link_cmd = f'rclone link --config ./rclone.conf "{link_target}"'
         t2 = await asyncio.create_subprocess_shell(
             link_cmd,
@@ -140,9 +146,9 @@ async def _rclone_upload(user, path, base_path):
         if t2.returncode == 0:
             rclone_link = so.decode().strip()
     if bot_set.link_options in ['Index', 'Both'] and Config.INDEX_LINK:
-        index_link = f"{Config.INDEX_LINK}/{rel_path}".replace(' ', '%20')
+        index_link = f"{Config.INDEX_LINK}/{final_rel_path}".replace(' ', '%20')
 
-    # remote_info for the manage button
+    # remote_info for the manage button must also use the final path
     remote = ''
     base = ''
     try:
@@ -157,7 +163,7 @@ async def _rclone_upload(user, path, base_path):
     info = {
         'remote': remote,
         'base': base,
-        'path': rel_path,
+        'path': final_rel_path,
         'is_dir': is_dir
     }
     return rclone_link, index_link, info
@@ -236,7 +242,8 @@ async def track_upload(metadata, user, index: int = None, total: int = None):
             total_files=total,
         )
     else:
-        r_link, i_link, info = await _rclone_upload(user, metadata['filepath'], base_path)
+        quality = metadata.get('quality')
+        r_link, i_link, info = await _rclone_upload(user, metadata['filepath'], base_path, quality=quality)
         text = await format_string(
             "🎵 **{title}**\n👤 {artist}\n🎧 {provider}\n🔗 [Direct Link]({r_link})",
             {
@@ -281,7 +288,8 @@ async def music_video_upload(metadata, user):
             meta=metadata,
         )
     else:
-        r_link, i_link, info = await _rclone_upload(user, metadata['filepath'], base_path)
+        quality = metadata.get('quality')
+        r_link, i_link, info = await _rclone_upload(user, metadata['filepath'], base_path, quality=quality)
         text = await format_string(
             "🎬 **{title}**\n👤 {artist}\n🎧 {provider} Music Video\n🔗 [Direct Link]({r_link})",
             {
@@ -334,7 +342,11 @@ async def album_upload(metadata, user):
             for idx, track in enumerate(tracks, start=1):
                 await track_upload(track, user, index=idx, total=total_tracks)
     else:
-        r_link, i_link, info = await _rclone_upload(user, metadata['folderpath'], base_path)
+        # For albums, get quality from the first track as a representative
+        quality = None
+        if metadata.get('items'):
+            quality = metadata['items'][0].get('quality')
+        r_link, i_link, info = await _rclone_upload(user, metadata['folderpath'], base_path, quality=quality)
         text = await format_string(
             "💿 **{album}**\n👤 {artist}\n🎧 {provider}\n🔗 [Direct Link]({r_link})",
             {
@@ -379,7 +391,11 @@ async def playlist_upload(metadata, user):
             for idx, track in enumerate(tracks, start=1):
                 await track_upload(track, user, index=idx, total=total_tracks)
     else:
-        r_link, i_link, info = await _rclone_upload(user, metadata['folderpath'], base_path)
+        # For playlists, get quality from the first track as a representative
+        quality = None
+        if metadata.get('items'):
+            quality = metadata['items'][0].get('quality')
+        r_link, i_link, info = await _rclone_upload(user, metadata['folderpath'], base_path, quality=quality)
         text = await format_string(
             "🎵 **{title}**\n👤 Curated by {artist}\n🎧 {provider} Playlist\n🔗 [Direct Link]({r_link})",
             {

@@ -3,7 +3,6 @@ import json
 import asyncio
 import shutil
 import re
-import time
 from pathlib import Path
 
 from config import Config
@@ -86,7 +85,6 @@ async def start_tidal_ng(link: str, user: dict, options: dict = None):
         final_download_path.mkdir(parents=True, exist_ok=True)
 
         # --- Execute Download ---
-        start_time = time.time()
         # Ensure ffmpeg path is set for the tool via environment/config
         env = os.environ.copy()
         env["FFMPEG_PATH"] = "/usr/bin/ffmpeg"
@@ -112,20 +110,13 @@ async def start_tidal_ng(link: str, user: dict, options: dict = None):
 
         # --- Collect Files ---
         await reporter.set_stage("Processing")
-        # Find files modified after the download started to isolate this task's output
         downloaded_files = []
         for root, _, files in os.walk(final_download_path):
             for file in files:
-                try:
-                    file_path = os.path.join(root, file)
-                    # Check if the file was modified after the process started
-                    if os.path.getmtime(file_path) > start_time:
-                        downloaded_files.append(file_path)
-                except OSError:
-                    continue
+                downloaded_files.append(os.path.join(root, file))
 
         if not downloaded_files:
-            raise Exception("No new files were found in the download directory after the task completed.")
+            raise Exception("No files were downloaded.")
 
         # --- Metadata Extraction ---
         items = []
