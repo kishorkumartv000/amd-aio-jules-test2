@@ -105,7 +105,7 @@ async def _rclone_upload(user, path, base_path):
         dest_path = f"{dest_root}/{os.path.dirname(rel_path)}".rstrip('/')
 
     # Add verbose flag and include filter for single files
-    copy_cmd = f'rclone copy -v --create-empty-src-dirs --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
+    copy_cmd = f'rclone copy -v --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
     if not is_dir:
         # Ensure we only copy the intended file, not everything in the source directory
         file_name = os.path.basename(abs_path)

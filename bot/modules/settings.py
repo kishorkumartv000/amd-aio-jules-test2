@@ -1239,63 +1239,52 @@ async def rclone_cloud_move_start_cb(client, cb:CallbackQuery):
 
 @Client.on_callback_query(filters.regex(pattern=r"^rcloneManageStart\|"))
 async def rclone_manage_start_cb(client, cb:CallbackQuery):
-    if not await check_user(cb.from_user.id, restricted=True):
-        return
+    if await check_user(cb.from_user.id, restricted=True):
+        from ..helpers.database.pg_impl import rclone_sessions_db
+        from ..helpers.state import conversation_state
 
-    from ..helpers.database.pg_impl import rclone_sessions_db
-    from ..helpers.state import conversation_state
+        try:
+            token = cb.data.split('|', 1)[1]
+        except Exception:
+            token = None
 
-    try:
-        token = cb.data.split('|', 1)[1]
-    except Exception:
-        token = None
+        if not token:
+            return await cb.answer("Invalid button.", show_alert=True)
 
-    if not token:
-        return await cb.answer("Invalid button.", show_alert=True)
+        # Get the session context from the database
+        ctx = rclone_sessions_db.get_session(token)
 
-    # Get the session context from the database
-    ctx = rclone_sessions_db.get_session(token)
+        if not ctx:
+            return await edit_message(
+                cb.message,
+                "❌ **Session Expired or Invalid**\n\nThis interactive session has expired or is invalid. Please start the operation again.",
+                rclone_buttons()
+            )
 
-    if not ctx:
-        # Fallback for old conversation_state method during transition
-        # This can be removed in the future.
-        state = await conversation_state.get(cb.from_user.id) or {}
-        manage_map = (state.get('data', {})).get('rclone_manage_map', {})
-        ctx = manage_map.get(token)
+        # Clean up the one-time session token from the database
+        rclone_sessions_db.delete_session(token)
 
-    if not ctx:
-        return await edit_message(
-            cb.message,
-            "❌ **Session Expired or Invalid**\n\nThis interactive session has expired or is invalid. Please start the operation again.",
-            rclone_buttons()
+        # Proceed with the original logic, using the context from the DB
+        src_remote = ctx.get('src_remote')
+        base = (ctx.get('base') or '').strip('/')
+        src_path = (ctx.get('src_path') or '').strip('/')
+
+        effective = f"{base}/{src_path}".strip('/') if base else src_path
+
+        # We still use conversation_state for the multi-step browsing process,
+        # but the initial state is now loaded from the persistent database.
+        await conversation_state.update(
+            cb.from_user.id,
+            stage='rclone_cc_browse_src',
+            src_remote=src_remote,
+            src_path=effective,
+            src_file=ctx.get('src_file'), # Pass this along too
+            cc_mode=ctx.get('cc_mode', 'copy'),
+            cc_src_multi=False,
+            cc_src_selected=[],
+            src_page=0
         )
-
-    # Clean up the one-time session token from the database if it exists there
-    rclone_sessions_db.delete_session(token)
-
-    # Proceed with the original logic, using the context from the DB
-    src_remote = ctx.get('src_remote')
-    base = (ctx.get('base') or '').strip('/')
-    src_path = (ctx.get('src_path') or '').strip('/')
-
-    effective = f"{base}/{src_path}".strip('/') if base else src_path
-
-    # We still use conversation_state for the multi-step browsing process,
-    # but the initial state is now loaded from the persistent database.
-    await conversation_state.start(
-        cb.from_user.id,
-        'rclone_cc_browse_src',
-        data={
-            'src_remote': src_remote,
-            'src_path': effective,
-            'src_file': ctx.get('src_file'), # Pass this along too
-            'cc_mode': ctx.get('cc_mode', 'copy'),
-            'cc_src_multi': False,
-            'cc_src_selected': [],
-            'src_page': 0
-        }
-    )
-    await _rclone_cc_render_browse(client, cb, which='src', include_files=True)
+        await _rclone_cc_render_browse(client, cb, which='src', include_files=True)
 
 @Client.on_callback_query(filters.regex(pattern=r"^rcloneCcMode\|"))
 async def rclone_cc_mode_cb(client, cb:CallbackQuery):
