@@ -62,19 +62,11 @@ def get_content_id_from_url(url: str) -> str:
 
 async def start_tidal_ng(link: str, user: dict, options: dict = None):
     """
-    Handles downloads using the tidal-dl-ng CLI tool in an isolated directory,
-    and then uploads the result.
+    Handles downloads using the tidal-dl-ng CLI tool, and then uploads the result.
     """
     bot_msg = user.get("bot_msg")
-    user_id = user.get("user_id")
-    task_id = user.get("task_id", "no_id")
-
-    # Create a unique temporary directory for this download task
-    temp_download_path = os.path.join(Config.LOCAL_STORAGE, str(user_id), f"tidal_ng_temp_{task_id}")
-    os.makedirs(temp_download_path, exist_ok=True)
-
     original_settings = None
-    settings_backup = None
+    user_id = user.get("user_id")
 
     # Initialize progress reporter
     label = "Tidal NG"
@@ -82,22 +74,20 @@ async def start_tidal_ng(link: str, user: dict, options: dict = None):
     await reporter.set_stage("Downloading")
 
     try:
-        # --- Backup and modify settings.json ---
+        # --- Load original settings.json ---
         try:
             with open(TIDAL_DL_NG_SETTINGS_PATH, "r") as f:
-                settings_backup = json.load(f)
+                original_settings = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            settings_backup = {}
+            original_settings = {}
 
-        temp_settings = settings_backup.copy()
-        temp_settings["download_base_path"] = temp_download_path
-
-        # Ensure the directory for the settings file exists
-        os.makedirs(os.path.dirname(TIDAL_DL_NG_SETTINGS_PATH), exist_ok=True)
-        with open(TIDAL_DL_NG_SETTINGS_PATH, "w") as f:
-            json.dump(temp_settings, f, indent=4)
+        # --- Determine Download Path from user's settings.json ---
+        final_download_path = Path(get_tidal_ng_download_base_path())
+        final_download_path.mkdir(parents=True, exist_ok=True)
 
         # --- Execute Download ---
+        start_time = time.time()
+        # Ensure ffmpeg path is set for the tool via environment/config
         env = os.environ.copy()
         env["FFMPEG_PATH"] = "/usr/bin/ffmpeg"
         cmd = ["python", TIDAL_DL_NG_CLI_PATH, "dl", link]
@@ -116,33 +106,38 @@ async def start_tidal_ng(link: str, user: dict, options: dict = None):
         if process.returncode != 0:
             raise Exception("Tidal-NG download process failed.")
 
-        # --- Collect Files from the temporary directory ---
+        # --- Re-resolve download path from settings.json (in case user changed it) ---
+        final_download_path = Path(get_tidal_ng_download_base_path())
+        LOGGER.info(f"Tidal-NG: Using download path {final_download_path}")
+
+        # --- Collect Files ---
         await reporter.set_stage("Processing")
+        # Find files modified after the download started to isolate this task's output
         downloaded_files = []
-        for root, _, files in os.walk(temp_download_path):
+        for root, _, files in os.walk(final_download_path):
             for file in files:
-                downloaded_files.append(os.path.join(root, file))
+                try:
+                    file_path = os.path.join(root, file)
+                    # Check if the file was modified after the process started
+                    if os.path.getmtime(file_path) > start_time:
+                        downloaded_files.append(file_path)
+                except OSError:
+                    continue
 
         if not downloaded_files:
-            raise Exception("No files were downloaded into the temporary directory.")
+            raise Exception("No new files were found in the download directory after the task completed.")
 
         # --- Metadata Extraction ---
         items = []
         for file_path in downloaded_files:
             try:
-                # Use a combined metadata dictionary for quality and other tags
-                metadata = {}
                 if file_path.lower().endswith((".mp4", ".m4v")):
-                    metadata.update(await extract_video_metadata(file_path))
+                    metadata = await extract_video_metadata(file_path)
                 else:
-                    metadata.update(await extract_audio_metadata(file_path))
-
+                    metadata = await extract_audio_metadata(file_path)
                 metadata["filepath"] = file_path
                 metadata["provider"] = "Tidal NG"
-                # Add quality from original settings for later use
-                metadata["quality"] = settings_backup.get("quality_audio", "N/A")
                 items.append(metadata)
-
             except Exception as e:
                 LOGGER.error(f"Metadata extraction failed for {file_path}: {str(e)}")
 
@@ -150,41 +145,72 @@ async def start_tidal_ng(link: str, user: dict, options: dict = None):
             raise Exception("Metadata extraction failed for all downloaded files.")
 
         # --- Determine Content Type ---
+        # Prefer folder semantics from exislow layout: Albums/, Playlists/, Mix/, Tracks/, Videos/
         inferred_type = None
-        # Simplified logic: if more than one file, it's a collection (album/playlist)
-        if len(items) > 1:
-            # Check if all tracks belong to the same album
-            album_titles = {item.get("album") for item in items if item.get("album")}
-            if len(album_titles) == 1:
+        try:
+            first_dir_parts = os.path.dirname(items[0]["filepath"]).split(os.sep)
+            if "Albums" in first_dir_parts:
                 inferred_type = "album"
-            else:
+            elif "Playlists" in first_dir_parts:
                 inferred_type = "playlist"
-        elif items:
-            # Single item
-            if items[0]["filepath"].lower().endswith((".mp4", ".m4v")):
+            elif "Videos" in first_dir_parts:
                 inferred_type = "video"
-            else:
+            elif "Tracks" in first_dir_parts:
                 inferred_type = "track"
+            elif "Mix" in first_dir_parts:
+                inferred_type = "playlist"
+        except Exception:
+            inferred_type = None
 
         content_type = inferred_type or "track"
+        if not inferred_type:
+            if len(items) > 1:
+                if any(item.get("album") for item in items) and len(set(item.get("album") for item in items)) == 1:
+                    content_type = "album"
+                else:
+                    content_type = "playlist"
+            elif items[0]["filepath"].lower().endswith((".mp4", ".m4v")):
+                content_type = "video"
 
         # --- Prepare Metadata for Uploader ---
-        # For collections, the folder path is the temp dir itself.
-        # For single tracks/videos, it's also the temp dir.
-        content_folder = temp_download_path
+        # Determine the folder that contains this specific content (not the global download root)
+        item_dirs = [os.path.dirname(it["filepath"]) for it in items]
+        if content_type in ("album", "playlist") and len(item_dirs) > 1:
+            try:
+                content_folder = os.path.commonpath(item_dirs)
+            except Exception:
+                content_folder = item_dirs[0]
+        else:
+            content_folder = item_dirs[0]
 
-        resolved_title = "Unknown"
+        # Resolve a human-friendly title for zips/messages
+        path_segments = content_folder.split(os.sep)
+        resolved_title = None
         if content_type == "album":
-            resolved_title = items[0].get("album", "Unknown Album")
+            resolved_title = items[0].get("album")
+            if not resolved_title:
+                if "Albums" in path_segments:
+                    idx = path_segments.index("Albums")
+                    if idx + 1 < len(path_segments):
+                        # Folder format often: "{album_artist} - {album_title}{album_explicit}"
+                        folder_name = path_segments[idx + 1]
+                        if " - " in folder_name:
+                            resolved_title = folder_name.split(" - ", 1)[1]
+                        else:
+                            resolved_title = folder_name
+                if not resolved_title:
+                    resolved_title = os.path.basename(content_folder)
         elif content_type == "playlist":
-             # Use the URL to derive a playlist name if possible
-            match = re.search(r"/playlist/([a-fA-F0-9-]+)", link)
-            if match:
-                resolved_title = f"Playlist {match.group(1)}"
-            else:
-                resolved_title = "Playlist"
-        else: # track or video
-            resolved_title = items[0].get("title", "Unknown Track")
+            if "Playlists" in path_segments:
+                idx = path_segments.index("Playlists")
+                if idx + 1 < len(path_segments):
+                    resolved_title = path_segments[idx + 1]
+            if not resolved_title:
+                resolved_title = os.path.basename(content_folder)
+        elif content_type in ("video", "track"):
+            resolved_title = items[0].get("title") or os.path.basename(items[0]["filepath"])
+        else:
+            resolved_title = items[0].get("title") or os.path.basename(content_folder)
 
         upload_meta = {
             "success": True,
@@ -206,33 +232,28 @@ async def start_tidal_ng(link: str, user: dict, options: dict = None):
             content_id=content_id,
             title=upload_meta["title"],
             artist=upload_meta["artist"],
-            quality=settings_backup.get("quality_audio", "N/A"),
+            quality=original_settings.get("quality_audio", "N/A"),
         )
 
         # --- Upload ---
         if content_type == "track":
-            await track_upload(items[0], user, base_path=temp_download_path)
+            await track_upload(items[0], user)
         elif content_type == "video":
-            await music_video_upload(items[0], user, base_path=temp_download_path)
+            await music_video_upload(items[0], user)
         elif content_type == "album":
-            await album_upload(upload_meta, user, base_path=temp_download_path)
+            await album_upload(upload_meta, user)
         elif content_type == "playlist":
-            await playlist_upload(upload_meta, user, base_path=temp_download_path)
+            await playlist_upload(upload_meta, user)
 
     except Exception as e:
         LOGGER.error(f"An error occurred in start_tidal_ng: {e}", exc_info=True)
         await edit_message(bot_msg, f"❌ **Fatal Error:** {e}")
 
     finally:
-        # --- Restore settings.json and cleanup ---
-        if settings_backup is not None:
+        if original_settings:
             try:
                 with open(TIDAL_DL_NG_SETTINGS_PATH, "w") as f:
-                    json.dump(settings_backup, f, indent=4)
+                    json.dump(original_settings, f, indent=4)
                 LOGGER.info("Tidal-NG settings.json restored to original state.")
             except Exception as e:
                 LOGGER.error(f"Failed to restore Tidal-NG settings.json: {e}")
-
-        if os.path.exists(temp_download_path):
-            shutil.rmtree(temp_download_path, ignore_errors=True)
-            LOGGER.info(f"Cleaned up temporary directory: {temp_download_path}")
