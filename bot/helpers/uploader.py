@@ -485,12 +485,7 @@ async def rclone_upload(user, path, base_path):
         else:
             parent_dir = os.path.dirname(relative_path)
             source_for_copy = abs_path
-            # If parent_dir is empty, it means the file is at the root of the relative path.
-            # In this case, the destination is just the dest_root.
-            if parent_dir:
-                dest_path = f"{dest_root}/{parent_dir}".rstrip("/")
-            else:
-                dest_path = dest_root.rstrip("/")
+            dest_path = f"{dest_root}/{parent_dir}".rstrip("/")
 
     # 1) Copy source to remote destination
     copy_cmd = f'rclone copy --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
