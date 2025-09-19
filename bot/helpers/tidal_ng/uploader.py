@@ -88,28 +88,20 @@ async def _rclone_upload(user, path, base_path):
         rel_path = os.path.basename(abs_path)
 
     # Correctly determine source and destination for rclone
-    # For both files and dirs, we want to copy the item *into* the destination.
-    # To preserve the subfolder structure (e.g., "Albums/..."), we should
-    # copy the parent of the relative path.
-    # For rclone, the source should be a directory.
     if is_dir:
-        # If path is a directory, copy the directory itself.
         source_for_copy = abs_path
-        # The destination is the remote path that will contain the copied directory.
-        dest_path = f"{dest_root}/{os.path.dirname(rel_path)}".rstrip('/')
+        dest_path = f"{dest_root}/{rel_path}".rstrip('/')
+        copy_cmd = f'rclone copy -v --create-empty-src-dirs --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
     else:
-        # If path is a single file, we still copy its parent directory,
-        # but use an --include filter to only upload the single file.
-        # This preserves the folder structure on the remote.
-        source_for_copy = os.path.dirname(abs_path)
-        dest_path = f"{dest_root}/{os.path.dirname(rel_path)}".rstrip('/')
-
-    # Add verbose flag and include filter for single files
-    copy_cmd = f'rclone copy -v --create-empty-src-dirs --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
-    if not is_dir:
-        # Ensure we only copy the intended file, not everything in the source directory
-        file_name = os.path.basename(abs_path)
-        copy_cmd += f" --include \"{file_name}\""
+        source_for_copy = abs_path
+        # If the relative path contains a directory, upload to that subdirectory.
+        if os.sep in rel_path:
+            parent_dir = os.path.dirname(rel_path)
+            dest_path = f"{dest_root}/{parent_dir}".rstrip("/")
+        # Otherwise, upload to the root of the destination.
+        else:
+            dest_path = dest_root.rstrip("/")
+        copy_cmd = f'rclone copy -v --create-empty-src-dirs --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
 
     proc = await asyncio.create_subprocess_shell(
         copy_cmd,
@@ -173,7 +165,12 @@ async def _post_manage(user, remote_info: dict):
             src_path = rel_path
             src_file = None
         else:
-            src_path = os.path.dirname(rel_path)
+            # Symmetrical to the upload logic: if the relative path has a directory,
+            # use it. Otherwise, the path is empty (root).
+            if os.sep in rel_path:
+                src_path = os.path.dirname(rel_path)
+            else:
+                src_path = ""
             src_file = rel_path
 
         context = {

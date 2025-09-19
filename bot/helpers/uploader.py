@@ -483,14 +483,9 @@ async def rclone_upload(user, path, base_path):
             source_for_copy = abs_path
             dest_path = f"{dest_root}/{relative_path}".rstrip("/")
         else:
+            parent_dir = os.path.dirname(relative_path)
             source_for_copy = abs_path
-            # If the relative path contains a directory, upload to that subdirectory.
-            if os.sep in relative_path:
-                parent_dir = os.path.dirname(relative_path)
-                dest_path = f"{dest_root}/{parent_dir}".rstrip("/")
-            # Otherwise, upload to the root of the destination.
-            else:
-                dest_path = dest_root.rstrip("/")
+            dest_path = f"{dest_root}/{parent_dir}".rstrip("/")
 
     # 1) Copy source to remote destination
     copy_cmd = f'rclone copy --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
@@ -580,12 +575,7 @@ async def _post_rclone_manage_button(user, remote_info: dict):
             src_path = rel_path
             src_file = None
         else:
-            # Symmetrical to the upload logic: if the relative path has a directory,
-            # use it. Otherwise, the path is empty (root).
-            if os.sep in rel_path:
-                src_path = os.path.dirname(rel_path)
-            else:
-                src_path = ""
+            src_path = os.path.dirname(rel_path)
             src_file = rel_path
 
         context = {
