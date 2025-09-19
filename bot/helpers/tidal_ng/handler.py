@@ -129,12 +129,10 @@ async def start_tidal_ng(link: str, user: dict, options: dict = None):
         # --- Metadata Extraction ---
         items = []
         for file_path in downloaded_files:
-            if file_path.lower().endswith('.lrc'):
-                continue
             try:
                 # Use a combined metadata dictionary for quality and other tags
                 metadata = {}
-                if file_path.lower().endswith((".mp4", ".m4v", ".ts")):
+                if file_path.lower().endswith((".mp4", ".m4v")):
                     metadata.update(await extract_video_metadata(file_path))
                 else:
                     metadata.update(await extract_audio_metadata(file_path))
@@ -163,7 +161,7 @@ async def start_tidal_ng(link: str, user: dict, options: dict = None):
                 inferred_type = "playlist"
         elif items:
             # Single item
-            if items[0]["filepath"].lower().endswith((".mp4", ".m4v", ".ts")):
+            if items[0]["filepath"].lower().endswith((".mp4", ".m4v")):
                 inferred_type = "video"
             else:
                 inferred_type = "track"
@@ -171,9 +169,16 @@ async def start_tidal_ng(link: str, user: dict, options: dict = None):
         content_type = inferred_type or "track"
 
         # --- Prepare Metadata for Uploader ---
-        # For collections, the folder path is the temp dir itself.
-        # For single tracks/videos, it's also the temp dir.
+        # Find the actual content folder, which is the common path of all downloaded files.
         content_folder = temp_download_path
+        if content_type in ["album", "playlist"] and downloaded_files:
+            common_path = os.path.commonpath(downloaded_files)
+            # If the common path is a directory, that's our content folder.
+            if os.path.isdir(common_path):
+                content_folder = common_path
+            else:
+                # If it's a file path (e.g., for single track downloads), the content folder is its parent.
+                content_folder = os.path.dirname(common_path)
 
         resolved_title = "Unknown"
         if content_type == "album":

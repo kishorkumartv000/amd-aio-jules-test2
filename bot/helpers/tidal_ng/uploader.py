@@ -235,20 +235,6 @@ async def track_upload(metadata, user, base_path: str, index: int = None, total:
             file_index=index,
             total_files=total,
         )
-        # --- LRC file upload ---
-        try:
-            audio_filepath = metadata.get('filepath')
-            if audio_filepath and isinstance(audio_filepath, str):
-                lrc_filepath = os.path.splitext(audio_filepath)[0] + '.lrc'
-                if os.path.exists(lrc_filepath):
-                    lrc_caption = f"Lyrics for: {metadata.get('title', 'track')}"
-                    await send_message(user, lrc_filepath, 'doc', caption=lrc_caption)
-                    try:
-                        os.remove(lrc_filepath)
-                    except Exception as e:
-                        LOGGER.warning(f"Could not remove LRC file {lrc_filepath}: {e}")
-        except Exception as e:
-            LOGGER.error(f"An error occurred during LRC file handling: {e}")
     else:
         r_link, i_link, info = await _rclone_upload(user, metadata['filepath'], base_path)
         text = await format_string(
@@ -344,7 +330,7 @@ async def album_upload(metadata, user, base_path: str):
             tracks = metadata.get('tracks') or metadata.get('items', [])
             total_tracks = len(tracks)
             for idx, track in enumerate(tracks, start=1):
-                await track_upload(track, user, base_path, index=idx, total=total_tracks)
+                await track_upload(track, user, index=idx, total=total_tracks)
     else:
         r_link, i_link, info = await _rclone_upload(user, metadata['folderpath'], base_path)
         text = await format_string(
@@ -388,7 +374,7 @@ async def playlist_upload(metadata, user, base_path: str):
             tracks = metadata.get('tracks') or metadata.get('items', [])
             total_tracks = len(tracks)
             for idx, track in enumerate(tracks, start=1):
-                await track_upload(track, user, base_path, index=idx, total=total_tracks)
+                await track_upload(track, user, index=idx, total=total_tracks)
     else:
         r_link, i_link, info = await _rclone_upload(user, metadata['folderpath'], base_path)
         text = await format_string(

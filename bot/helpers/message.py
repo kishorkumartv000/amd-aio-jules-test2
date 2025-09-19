@@ -84,7 +84,6 @@ async def send_message(user, item, itype='text', caption=None, markup=None, chat
     if not isinstance(user, dict):
         user = await fetch_user_details(user)
     chat_id = chat_id if chat_id else user['chat_id']
-    msg = None
     
     # Get the running event loop safely in the main async context
     try:
