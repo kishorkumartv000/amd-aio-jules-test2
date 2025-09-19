@@ -22,16 +22,8 @@ def _get_folder_size(folder_path: str) -> int:
 
 
 async def create_tidal_ng_zip(directory: str, user_id: int, metadata: dict) -> str:
-    """Create a zip file for Tidal NG content with provider-aware naming.
-
-    Examples:
-    - Album:     [Tidal NG] The_Album_Name.zip
-    - Playlist:  [Tidal NG] My_Playlist (Playlist).zip
-    - Artist:    [Tidal NG] Some_Artist (Artist).zip
-    - Video:     [Tidal NG] Some_Video (Video).zip
-    """
+    """Create a zip file for Tidal NG content with provider-aware naming."""
     title = (metadata.get('title') or 'Tidal NG').strip()
-    # sanitize and convert spaces to underscores similar to Apple helper
     safe_title = re.sub(r'[\\/*?:"<>|]', '', title)
     if bot_set.zip_name_use_underscores:
         safe_title = safe_title.replace(' ', '_')
@@ -55,7 +47,7 @@ async def create_tidal_ng_zip(directory: str, user_id: int, metadata: dict) -> s
     while os.path.exists(zip_path):
         zip_path = os.path.join(zip_dir, f"{base}_{idx}.zip")
         idx += 1
-    # Simple synchronous zipping (folder small enough or split handled elsewhere)
+
     import zipfile
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, _, files in os.walk(directory):
@@ -69,9 +61,7 @@ async def create_tidal_ng_zip(directory: str, user_id: int, metadata: dict) -> s
 
 async def _rclone_upload(user, path, base_path):
     """
-    Uploads files/folders to Rclone, respecting the original subfolder structure.
-    - Fixes single track uploads.
-    - Adds verbose logging.
+    Uploads files/folders to Rclone using the corrected logic from the Apple Music uploader.
     """
     dest_root = (getattr(bot_set, 'rclone_dest', None) or Config.RCLONE_DEST)
     if not dest_root:
@@ -80,55 +70,51 @@ async def _rclone_upload(user, path, base_path):
     abs_path = os.path.abspath(path)
     is_dir = os.path.isdir(abs_path)
 
-    # Calculate relative path from the base download directory
-    try:
-        base_abs = os.path.abspath(base_path)
-        rel_path = os.path.relpath(abs_path, base_abs) if abs_path.startswith(base_abs) else os.path.basename(abs_path)
-    except Exception:
-        rel_path = os.path.basename(abs_path)
+    def _compute_relative(p: str, base: str | None) -> str:
+        try:
+            p_abs = os.path.abspath(p)
+            if base:
+                base_abs = os.path.abspath(base)
+                if p_abs.startswith(base_abs):
+                    return os.path.normpath(os.path.relpath(p_abs, base_abs))
+        except Exception:
+            pass
+        # Fallback for Tidal NG: try to anchor at a known subfolder
+        for anchor in ["/Albums/", "/Playlists/", "/Tracks/", "/Videos/", "/Mix/"]:
+            sep_anchor = anchor.replace("/", os.sep)
+            if sep_anchor in p_abs:
+                try:
+                    root = p_abs.split(sep_anchor, 1)[0]
+                    return os.path.normpath(os.path.relpath(p_abs, root))
+                except Exception:
+                    continue
+        return os.path.basename(p_abs) if os.path.isfile(p_abs) else os.path.basename(os.path.normpath(p_abs))
 
-    # Normalize the relative path to handle cases like "."
-    rel_path = os.path.normpath(rel_path)
+    rel_path = _compute_relative(abs_path, base_path)
     if rel_path == ".":
         rel_path = ""
 
-    # Correctly determine source and destination for rclone
-    # For both files and dirs, we want to copy the item *into* the destination.
-    # To preserve the subfolder structure (e.g., "Albums/..."), we should
-    # copy the parent of the relative path.
-    # For rclone, the source should be a directory.
     if is_dir:
-        # If path is a directory, copy the directory itself.
         source_for_copy = abs_path
-        # The destination is the remote path that will contain the copied directory.
-        dest_path = f"{dest_root}/{os.path.dirname(rel_path)}".rstrip('/')
+        dest_path = f"{dest_root}/{rel_path}".rstrip("/")
     else:
-        # If path is a single file, we still copy its parent directory,
-        # but use an --include filter to only upload the single file.
-        # This preserves the folder structure on the remote.
-        source_for_copy = os.path.dirname(abs_path)
-        dest_path = f"{dest_root}/{os.path.dirname(rel_path)}".rstrip('/')
+        parent_dir = os.path.dirname(rel_path)
+        source_for_copy = abs_path
+        dest_path = f"{dest_root}/{parent_dir}".rstrip("/")
 
-    # Add verbose flag and include filter for single files
-    copy_cmd = f'rclone copy -v --create-empty-src-dirs --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
-    if not is_dir:
-        # Ensure we only copy the intended file, not everything in the source directory
-        file_name = os.path.basename(abs_path)
-        copy_cmd += f" --include \"{file_name}\""
+    copy_cmd = f'rclone copy --config ./rclone.conf "{source_for_copy}" "{dest_path}"'
 
     proc = await asyncio.create_subprocess_shell(
         copy_cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
-    out, err = await proc.communicate()
+    _, err = await proc.communicate()
     if proc.returncode != 0:
         LOGGER.error(f"Rclone copy failed for '{source_for_copy}'.\nCMD: {copy_cmd}\nOutput:\n{err.decode().strip()}")
         return None, None, None
 
-    # Link generation
-    rclone_link = None
-    index_link = None
+    rclone_link, index_link = None, None
     if bot_set.link_options in ['RCLONE', 'Both']:
         link_target = f"{dest_root}/{rel_path}".rstrip('/')
         link_cmd = f'rclone link --config ./rclone.conf "{link_target}"'
@@ -137,15 +123,14 @@ async def _rclone_upload(user, path, base_path):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        so, se = await t2.communicate()
+        so, _ = await t2.communicate()
         if t2.returncode == 0:
             rclone_link = so.decode().strip()
+
     if bot_set.link_options in ['Index', 'Both'] and Config.INDEX_LINK:
         index_link = f"{Config.INDEX_LINK}/{rel_path}".replace(' ', '%20')
 
-    # remote_info for the manage button
-    remote = ''
-    base = ''
+    remote, base = '', ''
     try:
         if dest_root and ':' in dest_root:
             remote, base = dest_root.split(':', 1)
@@ -174,17 +159,13 @@ async def _post_manage(user, remote_info: dict):
         rel_path = remote_info.get('path') or ''
         is_dir = bool(remote_info.get('is_dir'))
 
-        # Always set the browser path to the directory containing the media.
-        # If the upload was a directory, that's our path.
-        # If it was a file, we take its parent directory.
         if is_dir:
             src_path = rel_path
             src_file = None
         else:
-            # For single files, we still want the browser to open in their containing folder.
             src_path = os.path.dirname(rel_path)
-            # We also pass the filename to potentially select it in the UI later.
-            src_file = os.path.basename(rel_path)
+            # Handle the edge case where rel_path might be empty or just "."
+            src_file = os.path.basename(rel_path) if rel_path else None
 
         context = {
             'src_remote': remote_info.get('remote'),
@@ -213,12 +194,6 @@ async def _post_manage(user, remote_info: dict):
 
 async def track_upload(metadata, user, base_path: str, index: int = None, total: int = None):
     if bot_set.upload_mode == 'Telegram':
-        reporter = user.get('progress')
-        if reporter:
-            try:
-                await reporter.set_stage("Uploading")
-            except Exception:
-                pass
         await send_message(
             user,
             metadata['filepath'],
@@ -255,16 +230,13 @@ async def track_upload(metadata, user, base_path: str, index: int = None, total:
             text += f"\n📁 [Index Link]({i_link})"
         await send_message(user, text)
         await _post_manage(user, info)
-    # Cleanup
+
     try:
         os.remove(metadata['filepath'])
+        if metadata.get('thumbnail'):
+            os.remove(metadata['thumbnail'])
     except Exception:
         pass
-    if metadata.get('thumbnail'):
-        try:
-            os.remove(metadata['thumbnail'])
-        except Exception:
-            pass
 
 
 async def music_video_upload(metadata, user, base_path: str):
@@ -299,24 +271,19 @@ async def music_video_upload(metadata, user, base_path: str):
             text += f"\n📁 [Index Link]({i_link})"
         await send_message(user, text)
         await _post_manage(user, info)
-    # Cleanup
+
     try:
         os.remove(metadata['filepath'])
+        if metadata.get('thumbnail'):
+            os.remove(metadata['thumbnail'])
     except Exception:
         pass
-    if metadata.get('thumbnail'):
-        try:
-            os.remove(metadata['thumbnail'])
-        except Exception:
-            pass
 
 
 async def album_upload(metadata, user, base_path: str):
     if bot_set.upload_mode == 'Telegram':
         if getattr(bot_set, 'tidal_ng_album_zip', False):
-            # Always create a single descriptive zip for Telegram mode
             zp = await create_tidal_ng_zip(metadata['folderpath'], user['user_id'], metadata)
-            zip_paths = [zp]
             caption = await format_string(
                 "💿 **{album}**\n👤 {artist}\n🎧 {provider}",
                 {
@@ -325,17 +292,15 @@ async def album_upload(metadata, user, base_path: str):
                     'provider': metadata.get('provider', 'Tidal NG')
                 }
             )
-            for idx, zp in enumerate(zip_paths, start=1):
-                await send_message(user, zp, 'doc', caption=caption)
-                try:
-                    os.remove(zp)
-                except Exception:
-                    pass
+            await send_message(user, zp, 'doc', caption=caption)
+            try:
+                os.remove(zp)
+            except Exception:
+                pass
         else:
             tracks = metadata.get('tracks') or metadata.get('items', [])
-            total_tracks = len(tracks)
             for idx, track in enumerate(tracks, start=1):
-                await track_upload(track, user, index=idx, total=total_tracks)
+                await track_upload(track, user, base_path, index=idx, total=len(tracks))
     else:
         r_link, i_link, info = await _rclone_upload(user, metadata['folderpath'], base_path)
         text = await format_string(
@@ -354,7 +319,7 @@ async def album_upload(metadata, user, base_path: str):
         else:
             await send_message(user, text)
         await _post_manage(user, info)
-    # Cleanup
+
     shutil.rmtree(metadata['folderpath'])
 
 
@@ -377,9 +342,8 @@ async def playlist_upload(metadata, user, base_path: str):
                 pass
         else:
             tracks = metadata.get('tracks') or metadata.get('items', [])
-            total_tracks = len(tracks)
             for idx, track in enumerate(tracks, start=1):
-                await track_upload(track, user, index=idx, total=total_tracks)
+                await track_upload(track, user, base_path, index=idx, total=len(tracks))
     else:
         r_link, i_link, info = await _rclone_upload(user, metadata['folderpath'], base_path)
         text = await format_string(
@@ -395,6 +359,5 @@ async def playlist_upload(metadata, user, base_path: str):
             text += f"\n📁 [Index Link]({i_link})"
         await send_message(user, text)
         await _post_manage(user, info)
-    # Cleanup
-    shutil.rmtree(metadata['folderpath'])
 
+    shutil.rmtree(metadata['folderpath'])
