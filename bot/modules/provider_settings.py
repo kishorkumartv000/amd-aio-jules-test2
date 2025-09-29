@@ -1838,8 +1838,6 @@ async def tidal_ng_prompt_json(c, cb: CallbackQuery):
 
 @Client.on_message(filters.text, group=14)
 async def tidal_ng_handle_json_value(c: Client, msg: Message):
-    if not msg.from_user:
-        return
     from ..helpers.state import conversation_state as cs
     st = await cs.get(msg.from_user.id)
     if not st or st.get("stage") != "tidal_ng_json_set":

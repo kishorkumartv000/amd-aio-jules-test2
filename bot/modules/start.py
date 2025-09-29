@@ -6,8 +6,6 @@ import bot.helpers.translations as lang
 
 @Client.on_message(filters.command(CMD.START))
 async def start(bot, update):
-    if not update.from_user:
-        return
     msg = await bot.send_message(
         chat_id=update.chat.id,
         text=lang.s.WELCOME_MSG.format(

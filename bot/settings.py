@@ -76,19 +76,6 @@ class BotSettings:
         self.playlist_conc = _to_bool(__getvalue__('PLAYLIST_CONCURRENT'))
         # Queue mode toggle
         self.queue_mode = _to_bool(__getvalue__('QUEUE_MODE'))
-
-        # Dump Channel Settings
-        self.dump_channel_enabled = _to_bool(__getvalue__('DUMP_CHANNEL_ENABLED'))
-        dump_mode, _ = set_db.get_variable('DUMP_CHANNEL_MODE')
-        self.dump_channel_mode = dump_mode if dump_mode else Config.DUMP_CHANNEL_MODE
-        dump_id, _ = set_db.get_variable('DUMP_CHANNEL_ID')
-        if dump_id:
-            try:
-                self.dump_channel_id = int(dump_id)
-            except (ValueError, TypeError):
-                self.dump_channel_id = Config.DUMP_CHANNEL_ID
-        else:
-            self.dump_channel_id = Config.DUMP_CHANNEL_ID
         
         link_option, _ = set_db.get_variable('RCLONE_LINK_OPTIONS')
         self.link_options = link_option if self.rclone and link_option else 'False'

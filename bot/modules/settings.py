@@ -1327,69 +1327,6 @@ async def toggle_queue_mode_cb(client, cb:CallbackQuery):
             pass
 
 
-@Client.on_callback_query(filters.regex(pattern=r"^toggleDumpChannel$"))
-async def toggle_dump_channel_cb(client, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        try:
-            bot_set.dump_channel_enabled = not bool(getattr(bot_set, 'dump_channel_enabled', False))
-            set_db.set_variable('DUMP_CHANNEL_ENABLED', bot_set.dump_channel_enabled)
-        except Exception as e:
-            print(e)
-            pass
-        try:
-            await core_cb(client, cb)
-        except:
-            pass
-
-@Client.on_callback_query(filters.regex(pattern=r"^toggleDumpMode$"))
-async def toggle_dump_mode_cb(client, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        try:
-            current_mode = getattr(bot_set, 'dump_channel_mode', 'Both')
-            new_mode = "Only" if current_mode == "Both" else "Both"
-            bot_set.dump_channel_mode = new_mode
-            set_db.set_variable('DUMP_CHANNEL_MODE', new_mode)
-        except Exception as e:
-            print(e)
-            pass
-        try:
-            await core_cb(client, cb)
-        except:
-            pass
-
-
-@Client.on_callback_query(filters.regex(pattern=r"^setDumpChannel$"))
-async def set_dump_channel_cb(client, cb:CallbackQuery):
-    if await check_user(cb.from_user.id, restricted=True):
-        await conversation_state.start(cb.from_user.id, "set_dump_channel", {"chat_id": cb.message.chat.id})
-        await edit_message(cb.message, "Please forward a message from your dump channel.\n\nYou can /cancel to abort.")
-
-# Handler for receiving the forwarded message
-@Client.on_message(filters.forwarded & filters.private, group=5)
-async def handle_dump_channel_set(client, msg: Message):
-    if not await check_user(msg.from_user.id, restricted=True):
-        return
-
-    state = await conversation_state.get(msg.from_user.id)
-    if not state or state.get("stage") != "set_dump_channel":
-        return
-
-    if msg.forward_from_chat and msg.forward_from_chat.type.value == "channel":
-        channel_id = msg.forward_from_chat.id
-        # Validate and save
-        try:
-            bot_set.dump_channel_id = int(channel_id)
-            set_db.set_variable('DUMP_CHANNEL_ID', str(channel_id))
-            await send_message(msg, f"✅ Dump channel ID has been set to: <code>{channel_id}</code>")
-        except (ValueError, TypeError) as e:
-            await send_message(msg, f"❌ Invalid channel ID. Please try again. Error: {e}")
-    else:
-        await send_message(msg, "❌ This does not appear to be a message forwarded from a channel. Please try again.")
-
-    # Clean up state
-    await conversation_state.clear(msg.from_user.id)
-
-
 @Client.on_callback_query(filters.regex(pattern=r"^queuePanel$"))
 async def queue_panel_cb(client, cb:CallbackQuery):
     if await check_user(cb.from_user.id, restricted=True):
