@@ -205,6 +205,20 @@ async def _get_folder_size(folder_path: str) -> int:
     return total_size
 
 
+async def _send_header_message(user: dict, caption_template: str, metadata: dict):
+    """Formats and sends a header message to the user and dump channel."""
+    header_caption = await format_string(caption_template, metadata)
+    await send_message(user, header_caption)
+
+    # --- DUMP CHANNEL LOGIC ---
+    dump_enabled = bot_set.dump_channel_enabled and bot_set.dump_channel_id
+    dump_chat_id = bot_set.dump_channel_id if dump_enabled else None
+    if dump_enabled:
+        dump_user = user.copy()
+        dump_user['r_id'] = None
+        await send_message(dump_user, header_caption, chat_id=dump_chat_id)
+    # --- END DUMP LOGIC ---
+
 async def album_upload(metadata, user):
     """
     Upload an album
@@ -273,7 +287,8 @@ async def album_upload(metadata, user):
                     LOGGER.error(f"Error during zip cleanup for album {metadata.get('title')}: {e}")
         else:
             # Send a header message before uploading individual tracks
-            header_caption = await format_string(
+            await _send_header_message(
+                user,
                 "💿 <b>{album}</b>\n👤 {artist}\n🎧 {provider}",
                 {
                     'album': metadata['title'],
@@ -281,16 +296,6 @@ async def album_upload(metadata, user):
                     'provider': metadata.get('provider', 'Apple Music')
                 }
             )
-            await send_message(user, header_caption)
-
-            # --- DUMP CHANNEL LOGIC ---
-            dump_enabled = bot_set.dump_channel_enabled and bot_set.dump_channel_id
-            dump_chat_id = bot_set.dump_channel_id if dump_enabled else None
-            if dump_enabled:
-                dump_user = user.copy()
-                dump_user['r_id'] = None
-                await send_message(dump_user, header_caption, chat_id=dump_chat_id)
-            # --- END DUMP LOGIC ---
 
             tracks = metadata.get('tracks') or metadata.get('items', [])
             total_tracks = len(tracks)
@@ -470,7 +475,8 @@ async def playlist_upload(metadata, user):
                     LOGGER.error(f"Error during zip cleanup for playlist {metadata.get('title')}: {e}")
         else:
             # Send a header message before uploading individual tracks
-            header_caption = await format_string(
+            await _send_header_message(
+                user,
                 "🎵 <b>{title}</b>\n👤 Curated by {artist}\n🎧 {provider} Playlist",
                 {
                     'title': metadata['title'],
@@ -478,16 +484,6 @@ async def playlist_upload(metadata, user):
                     'provider': metadata.get('provider', 'Apple Music')
                 }
             )
-            await send_message(user, header_caption)
-
-            # --- DUMP CHANNEL LOGIC ---
-            dump_enabled = bot_set.dump_channel_enabled and bot_set.dump_channel_id
-            dump_chat_id = bot_set.dump_channel_id if dump_enabled else None
-            if dump_enabled:
-                dump_user = user.copy()
-                dump_user['r_id'] = None
-                await send_message(dump_user, header_caption, chat_id=dump_chat_id)
-            # --- END DUMP LOGIC ---
 
             tracks = metadata.get('tracks') or metadata.get('items', [])
             total_tracks = len(tracks)

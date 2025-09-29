@@ -316,6 +316,15 @@ async def apple_cb(c, cb: CallbackQuery):
                 InlineKeyboardButton(lab_atmos_max, callback_data="appleCycleAtmosMax"),
                 InlineKeyboardButton(lab_m3u8_mode, callback_data="appleCycleM3u8Mode"),
             ])
+        # Rich Metadata toggle
+        try:
+            from ..settings import bot_set as _bs_rich
+            rich_meta_label = f"Rich Metadata: {'ON ✅' if getattr(_bs_rich, 'apple_rich_metadata', False) else 'OFF'}"
+        except Exception:
+            rich_meta_label = "Rich Metadata: OFF"
+        buttons.append([
+            InlineKeyboardButton(rich_meta_label, callback_data="appleToggleRichMetadata")
+        ])
         # Apple flags popup toggle
         try:
             from ..settings import bot_set as _bs2
@@ -404,6 +413,21 @@ async def apple_toggle_zip_album(c: Client, cb: CallbackQuery):
             set_db.set_variable('APPLE_ALBUM_ZIP', bot_set.apple_album_zip)
         except Exception:
             pass
+        await apple_cb(c, cb)
+
+
+@Client.on_callback_query(filters.regex(pattern=r"^appleToggleRichMetadata$"))
+async def apple_toggle_rich_metadata(c: Client, cb: CallbackQuery):
+    if await check_user(cb.from_user.id, restricted=True):
+        try:
+            from ..settings import bot_set
+            from ..helpers.database.pg_impl import set_db
+            # Toggle the setting, defaulting to False if it doesn't exist
+            bot_set.apple_rich_metadata = not bool(getattr(bot_set, 'apple_rich_metadata', False))
+            set_db.set_variable('APPLE_RICH_METADATA', bot_set.apple_rich_metadata)
+        except Exception as e:
+            LOGGER.error(f"Failed to toggle Rich Metadata: {e}")
+        # Refresh the panel
         await apple_cb(c, cb)
 
 

@@ -6,15 +6,19 @@ import shutil
 from bot.helpers.utils import (
     run_apple_downloader,
     extract_title_from_url,
+    extract_apple_music_id_and_type,
+    fetch_apple_music_metadata_from_api,
+    download_file,
     extract_apple_metadata,
     send_message,
     edit_message,
     format_string,
     cleanup,
     list_apple_output_files,
-    cleanup_apple_global
+    cleanup_apple_global,
 )
 from bot.helpers.uploader import track_upload, album_upload, music_video_upload, artist_upload, playlist_upload
+from bot.settings import bot_set
 from bot.helpers.database.pg_impl import download_history
 from config import Config
 from bot.logger import LOGGER
@@ -149,6 +153,8 @@ class AppleMusicProvider:
             quality=str(quality)  # Convert to string
         )
         
+        # Use poster_msg from user dict if it exists, otherwise fall back to the bot_msg
+        final_poster_msg = user.get('poster_msg', user['bot_msg'])
         return {
             'success': True,
             'type': content_type,
@@ -156,7 +162,7 @@ class AppleMusicProvider:
             'folderpath': folder_path,
             'title': album_title,
             'artist': items[0]['artist'],
-            'poster_msg': user['bot_msg']
+            'poster_msg': final_poster_msg
         }
     
     def build_options(self, options: dict) -> list:
@@ -195,11 +201,36 @@ async def start_apple(link: str, user: dict, options: dict = None):
         if not provider.validate_url(link):
             await edit_message(user['bot_msg'], "❌ Invalid Apple Music URL")
             return
-        
+
+        # If rich metadata is enabled, try to fetch and post an art poster first
+        if getattr(bot_set, 'apple_rich_metadata', False):
+            content_id, content_type = extract_apple_music_id_and_type(link)
+            if content_id and content_type == 'album':  # API is most reliable for albums
+                api_meta = await fetch_apple_music_metadata_from_api(content_id, content_type)
+                if api_meta and api_meta.get('cover_url'):
+                    # Format the caption with details from the API
+                    caption = f"💿 <b>{api_meta.get('title', 'Unknown Album')}</b>\n" \
+                              f"👤 {api_meta.get('artist', 'Unknown Artist')}"
+                    if api_meta.get('track_count'):
+                        caption += f"\n🔢 {api_meta.get('track_count')} Tracks"
+                    caption += f"\n🎧 {api_meta.get('provider', 'Apple Music')}"
+
+                    # Send the poster message using the cover URL directly
+                    poster_msg = await send_message(user, api_meta['cover_url'], 'pic', caption=caption)
+                    if poster_msg:
+                        # Store the poster message to be used by the progress reporter and uploader
+                        user['poster_msg'] = poster_msg
+
         # Process content with options
         result = await provider.process(link, user, options)
         if not result['success']:
             await edit_message(user['bot_msg'], f"❌ Error: {result['error']}")
+            # Also delete the poster if it was created
+            if user.get('poster_msg') and user['poster_msg'] != user['bot_msg']:
+                try:
+                    await user['poster_msg'].delete()
+                except Exception:
+                    pass
             return
         
         # Process and upload content based on type
