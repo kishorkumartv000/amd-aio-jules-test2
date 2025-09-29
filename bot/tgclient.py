@@ -39,6 +39,10 @@ class Bot(Client):
 
     async def start(self):
         await super().start()
+
+        # Reload all settings from the database now that the bot is connected
+        bot_set.reload_db_settings()
+
         await bot_set.login_qobuz()
         await bot_set.login_deezer()
         await bot_set.login_tidal()

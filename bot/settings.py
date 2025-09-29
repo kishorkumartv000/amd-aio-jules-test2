@@ -43,27 +43,64 @@ def __decrypt_string__(string):
 
 class BotSettings:
     def __init__(self):
-        # Apple-only build: remove other providers
+        # --- Static and Environment-based Settings ---
         self.deezer = False
         self.qobuz = False
-        # Add this line to initialize can_enable_tidal
         self.can_enable_tidal = Config.ENABLE_TIDAL and Config.ENABLE_TIDAL.lower() == "true"
-        # Runtime toggle for the legacy Tidal integration
         self.tidal_legacy_enabled = self.can_enable_tidal
         self.admins = Config.ADMINS
-        self.apple = None  # Apple Music settings placeholder
+        self.apple = None
         self.bot_username = (Config.BOT_USERNAME or "").lstrip("@")
+        self.clients = []
+        self.download_history = download_history
+        self.rclone = False
 
-        self.set_language()
+        # --- Initialize with Defaults (will be reloaded from DB) ---
+        self.auth_users = []
+        self.auth_chats = []
+        self.anti_spam = 'OFF'
+        self.bot_public = False
+        self.art_poster = False
+        self.playlist_sort = False
+        self.disable_sort_link = False
+        self.artist_batch = False
+        self.playlist_conc = False
+        self.queue_mode = False
+        self.dump_channel_enabled = False
+        self.dump_channel_mode = Config.DUMP_CHANNEL_MODE
+        self.dump_channel_id = Config.DUMP_CHANNEL_ID
+        self.link_options = 'False'
+        self.rclone_copy_scope = 'FILE'
+        self.rclone_remote = ''
+        self.rclone_dest_path = ''
+        self.rclone_dest = ''
+        self.album_zip = False
+        self.playlist_zip = False
+        self.artist_zip = False
+        self.zip_name_use_underscores = True
+        self.video_as_document = False
+        self.extract_embedded_cover = False
+        self.apple_album_zip = False
+        self.apple_playlist_zip = False
+        self.tidal_ng_album_zip = False
+        self.tidal_ng_playlist_zip = False
+        self.apple_flags_popup = False
+        self.apple_cycle_presets_enabled = True
+        self.tidal_ng_cycle_presets_enabled = True
+
+        # --- Initial Setup Calls ---
+        self.set_language() # Sets language from DB, safe to call early
+        self.check_upload_mode() # Checks for rclone.conf
+        self.initialize_apple() # Sets up Apple Music specific settings
+
+    def reload_db_settings(self):
+        """Reload all settings from the database. Called after bot starts."""
+        LOGGER.info("Reloading settings from database...")
 
         db_users, _ = set_db.get_variable('AUTH_USERS')
         self.auth_users = json.loads(db_users) if db_users else []
         db_chats, _ = set_db.get_variable('AUTH_CHATS')
         self.auth_chats = json.loads(db_chats) if db_chats else []
-
-        self.rclone = False
-        self.check_upload_mode()
-        self.initialize_apple()
 
         spam, _ = set_db.get_variable('ANTI_SPAM')
         self.anti_spam = spam if spam else 'OFF'
@@ -74,7 +111,6 @@ class BotSettings:
         self.disable_sort_link = _to_bool(__getvalue__('PLAYLIST_LINK_DISABLE'))
         self.artist_batch = _to_bool(__getvalue__('ARTIST_BATCH_UPLOAD'))
         self.playlist_conc = _to_bool(__getvalue__('PLAYLIST_CONCURRENT'))
-        # Queue mode toggle
         self.queue_mode = _to_bool(__getvalue__('QUEUE_MODE'))
 
         # Dump Channel Settings
@@ -93,15 +129,12 @@ class BotSettings:
         link_option, _ = set_db.get_variable('RCLONE_LINK_OPTIONS')
         self.link_options = link_option if self.rclone and link_option else 'False'
 
-        # New: Rclone copy scope (FILE or FOLDER)
         rclone_scope, _ = set_db.get_variable('RCLONE_COPY_SCOPE')
         self.rclone_copy_scope = (rclone_scope or 'FILE').upper()
 
-        # New: Rclone destination parts (remote and path)
         db_remote, _ = set_db.get_variable('RCLONE_REMOTE')
         db_dest_path, _ = set_db.get_variable('RCLONE_DEST_PATH')
         env_full = (Config.RCLONE_DEST or '').strip() if Config.RCLONE_DEST else ''
-        # Back-compat: parse remote:path from env_full or DB full if present
         db_full, _ = set_db.get_variable('RCLONE_DEST')
         full = (db_full or env_full or '').strip()
         parsed_remote = ''
@@ -112,15 +145,10 @@ class BotSettings:
             except Exception:
                 parsed_remote = full.rstrip(':')
                 parsed_path = ''
-        # Prefer explicit DB parts, else parsed, else empty
         self.rclone_remote = (db_remote or parsed_remote or '').strip()
         self.rclone_dest_path = (db_dest_path if db_dest_path is not None else parsed_path).strip()
-        # Compose effective destination
         if self.rclone_remote:
-            if self.rclone_dest_path:
-                self.rclone_dest = f"{self.rclone_remote}:{self.rclone_dest_path}"
-            else:
-                self.rclone_dest = f"{self.rclone_remote}:"
+            self.rclone_dest = f"{self.rclone_remote}:{self.rclone_dest_path}" if self.rclone_dest_path else f"{self.rclone_remote}:"
         else:
             self.rclone_dest = full
 
@@ -128,7 +156,6 @@ class BotSettings:
         self.playlist_zip = _to_bool(__getvalue__('PLAYLIST_ZIP'))
         self.artist_zip = _to_bool(__getvalue__('ARTIST_ZIP'))
 
-        # New: Toggle for using underscores in zip filenames
         db_safe_zip, _ = set_db.get_variable('ZIP_NAME_USE_UNDERSCORES')
         if db_safe_zip is None:
             set_db.set_variable('ZIP_NAME_USE_UNDERSCORES', True)
@@ -136,43 +163,34 @@ class BotSettings:
         else:
             self.zip_name_use_underscores = _to_bool(db_safe_zip)
 
-        # New: telegram video upload type
         video_doc, _ = set_db.get_variable('VIDEO_AS_DOCUMENT')
         self.video_as_document = bool(video_doc) if isinstance(video_doc, bool) else (str(video_doc).lower() == 'true')
 
-        # New: whether to extract embedded cover artwork (persist in DB, default False)
         db_extract, _ = set_db.get_variable('EXTRACT_EMBEDDED_COVER')
         if db_extract is None or db_extract == '':
-            # Seed DB with default if unset
             set_db.set_variable('EXTRACT_EMBEDDED_COVER', False)
             self.extract_embedded_cover = False
         else:
             self.extract_embedded_cover = _to_bool(db_extract)
 
-        # Apple-specific zip toggles (separate from core)
         apple_album_zip, _ = set_db.get_variable('APPLE_ALBUM_ZIP')
         apple_playlist_zip, _ = set_db.get_variable('APPLE_PLAYLIST_ZIP')
         self.apple_album_zip = _to_bool(apple_album_zip)
         self.apple_playlist_zip = _to_bool(apple_playlist_zip)
 
-        # Tidal NG specific zip toggles (separate from core)
         tng_album_zip, _ = set_db.get_variable('TIDAL_NG_ALBUM_ZIP')
         tng_playlist_zip, _ = set_db.get_variable('TIDAL_NG_PLAYLIST_ZIP')
-        # default False when unset
         self.tidal_ng_album_zip = _to_bool(tng_album_zip)
         self.tidal_ng_playlist_zip = _to_bool(tng_playlist_zip)
 
-        # Apple flags popup for /download (Apple-only)
         self.apple_flags_popup = _to_bool(__getvalue__('APPLE_FLAGS_POPUP'))
 
-        # Preset cycling/toggle guards for panels
         acpe, _ = set_db.get_variable('APPLE_CYCLE_PRESETS_ENABLED')
         self.apple_cycle_presets_enabled = True if acpe is None else _to_bool(acpe)
         tncpe, _ = set_db.get_variable('TIDAL_NG_CYCLE_PRESETS_ENABLED')
         self.tidal_ng_cycle_presets_enabled = True if tncpe is None else _to_bool(tncpe)
 
-        self.clients = []
-        self.download_history = download_history
+        LOGGER.info(f"Successfully reloaded DB settings. Dump channel ID: {self.dump_channel_id}")
 
     def check_upload_mode(self):
         """Determine upload mode based on configuration"""
