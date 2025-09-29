@@ -239,6 +239,19 @@ The Apple provider now has its own zip controls and a rich settings panel driven
 
 Commands `/config_get`, `/config_set`, `/config_toggle`, `/config_show` still work and write to `config.yaml` safely with backups.
 
+### Rich Metadata Preview (Optional)
+
+-   **Location**: `Settings` -> `Providers` -> `Apple Music`
+-   **Button**: `Rich Metadata: [ON/OFF]`
+
+When enabled, the bot will attempt to fetch album details *before* the download starts. This provides a rich "art poster" with the cover art, album title, artist, and track count, similar to other providers.
+
+-   **How it works:** This feature uses the public, unauthenticated iTunes Search API. It extracts the album ID from the URL you provide and makes a request to `https://itunes.apple.com/lookup` to get the metadata. This is done to provide better feedback without needing a full developer token. This feature is most reliable for albums.
+
+### Improved Upload Formatting
+
+For non-zipped album and playlist uploads, the bot will now send a formatted header message with the album/playlist details *before* uploading the individual tracks. This helps organize multi-track downloads and makes it clear which files belong to which collection.
+
 ### Flags Popup for Apple /download
 
 - Enable in Settings → Providers → Apple Music → “Flags Popup”.
