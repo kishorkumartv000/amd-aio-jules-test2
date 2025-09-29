@@ -5,6 +5,7 @@ import logging
 import shutil
 from bot.helpers.utils import (
     run_apple_downloader,
+    extract_title_from_url,
     extract_apple_metadata,
     send_message,
     edit_message,
@@ -48,7 +49,14 @@ class AppleMusicProvider:
 
         # Initialize progress reporter
         from bot.helpers.progress import ProgressReporter
-        label = f"Apple Music • ID: {user.get('task_id','?')}"
+
+        # Try to get a title from the URL for early feedback
+        url_title = extract_title_from_url(url)
+        if url_title:
+            label = f"Apple Music • {url_title}"
+        else:
+            label = f"Apple Music • ID: {user.get('task_id','?')}"
+
         reporter = ProgressReporter(user['bot_msg'], label=label, show_system_stats=False)
         user['progress'] = reporter
         await reporter.set_stage("Preparing")

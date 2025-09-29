@@ -487,6 +487,23 @@ async def cleanup(user=None, metadata=None):
             LOGGER.info(f"Temp dir cleanup error: {str(e)}")
 
 # Apple Music specific utilities
+
+def extract_title_from_url(url: str) -> str | None:
+    """
+    Extracts a display-friendly title from an Apple Music URL slug.
+    Example: https://music.apple.com/us/album/the-dark-side-of-the-moon/401291891
+    Returns: "The Dark Side Of The Moon"
+    """
+    match = re.search(r"music\.apple\.com/[^/]+/(album|playlist)/([^/]+)/", url)
+    if match:
+        # Slug is like "the-dark-side-of-the-moon"
+        slug = match.group(2)
+        # Replace hyphens and capitalize words
+        title = ' '.join(word.capitalize() for word in slug.split('-'))
+        return title
+    return None
+
+
 async def run_apple_downloader(url: str, output_dir: str, options: list = None, user: dict = None, progress=None, task_id: str | None = None, cancel_event: asyncio.Event | None = None) -> dict:
     """
     Execute Apple Music downloader script with real-time progress.

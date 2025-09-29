@@ -272,6 +272,26 @@ async def album_upload(metadata, user):
                 except Exception as e:
                     LOGGER.error(f"Error during zip cleanup for album {metadata.get('title')}: {e}")
         else:
+            # Send a header message before uploading individual tracks
+            header_caption = await format_string(
+                "💿 **{album}**\n👤 {artist}\n🎧 {provider}",
+                {
+                    'album': metadata['title'],
+                    'artist': metadata['artist'],
+                    'provider': metadata.get('provider', 'Apple Music')
+                }
+            )
+            await send_message(user, header_caption)
+
+            # --- DUMP CHANNEL LOGIC ---
+            dump_enabled = bot_set.dump_channel_enabled and bot_set.dump_channel_id
+            dump_chat_id = bot_set.dump_channel_id if dump_enabled else None
+            if dump_enabled:
+                dump_user = user.copy()
+                dump_user['r_id'] = None
+                await send_message(dump_user, header_caption, chat_id=dump_chat_id)
+            # --- END DUMP LOGIC ---
+
             tracks = metadata.get('tracks') or metadata.get('items', [])
             total_tracks = len(tracks)
             for idx, track in enumerate(tracks, start=1):
@@ -449,6 +469,26 @@ async def playlist_upload(metadata, user):
                 except Exception as e:
                     LOGGER.error(f"Error during zip cleanup for playlist {metadata.get('title')}: {e}")
         else:
+            # Send a header message before uploading individual tracks
+            header_caption = await format_string(
+                "🎵 **{title}**\n👤 Curated by {artist}\n🎧 {provider} Playlist",
+                {
+                    'title': metadata['title'],
+                    'artist': metadata.get('artist', 'Various Artists'),
+                    'provider': metadata.get('provider', 'Apple Music')
+                }
+            )
+            await send_message(user, header_caption)
+
+            # --- DUMP CHANNEL LOGIC ---
+            dump_enabled = bot_set.dump_channel_enabled and bot_set.dump_channel_id
+            dump_chat_id = bot_set.dump_channel_id if dump_enabled else None
+            if dump_enabled:
+                dump_user = user.copy()
+                dump_user['r_id'] = None
+                await send_message(dump_user, header_caption, chat_id=dump_chat_id)
+            # --- END DUMP LOGIC ---
+
             tracks = metadata.get('tracks') or metadata.get('items', [])
             total_tracks = len(tracks)
             for idx, track in enumerate(tracks, start=1):
