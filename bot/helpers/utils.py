@@ -504,6 +504,55 @@ def extract_title_from_url(url: str) -> str | None:
     return None
 
 
+def extract_apple_music_id_and_type(url: str) -> tuple[str | None, str | None]:
+    """
+    Extracts the Apple Music content ID and type (album or playlist) from a URL.
+    """
+    match = re.search(r"music\.apple\.com/([a-z]{2}/)?(album|playlist)/[^/]+/(\d+)", url)
+    if match:
+        # Group 2 is 'album' or 'playlist', Group 3 is the ID
+        return match.group(3), match.group(2)
+    return None, None
+
+async def fetch_apple_music_metadata_from_api(content_id: str, content_type: str) -> dict | None:
+    """
+    Fetches rich metadata for an Apple Music album from the public iTunes Search API.
+    Note: This API is generally reliable for albums but not for playlists.
+    """
+    if content_type != 'album':
+        return None
+
+    api_url = f"https://itunes.apple.com/lookup?id={content_id}&entity=album"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(api_url, timeout=10) as response:
+                if response.status != 200:
+                    LOGGER.error(f"iTunes API returned status {response.status} for ID {content_id}")
+                    return None
+
+                data = await response.json()
+
+                if data.get('resultCount', 0) > 0:
+                    # Find the collection in the results, as the first item isn't always the one we want.
+                    for result in data.get('results', []):
+                        if result.get('wrapperType') == 'collection' and str(result.get('collectionId')) == content_id:
+                            # Request a higher resolution artwork image
+                            artwork_url = result.get('artworkUrl100', '').replace('100x100bb.jpg', '600x600bb.jpg')
+                            return {
+                                'type': 'album',
+                                'title': result.get('collectionName'),
+                                'artist': result.get('artistName'),
+                                'cover_url': artwork_url,
+                                'track_count': result.get('trackCount'),
+                                'provider': 'Apple Music'
+                            }
+    except Exception as e:
+        LOGGER.error(f"Failed to fetch or parse Apple Music metadata: {e}")
+        return None
+
+    return None
+
 async def run_apple_downloader(url: str, output_dir: str, options: list = None, user: dict = None, progress=None, task_id: str | None = None, cancel_event: asyncio.Event | None = None) -> dict:
     """
     Execute Apple Music downloader script with real-time progress.

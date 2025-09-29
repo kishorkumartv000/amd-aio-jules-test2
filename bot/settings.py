@@ -165,6 +165,15 @@ class BotSettings:
         # Apple flags popup for /download (Apple-only)
         self.apple_flags_popup = _to_bool(__getvalue__('APPLE_FLAGS_POPUP'))
 
+        # Apple rich metadata toggle
+        db_rich_meta, _ = set_db.get_variable('APPLE_RICH_METADATA')
+        if db_rich_meta is None:
+            # Set a default value (False) in the database if it doesn't exist
+            set_db.set_variable('APPLE_RICH_METADATA', False)
+            self.apple_rich_metadata = False
+        else:
+            self.apple_rich_metadata = _to_bool(db_rich_meta)
+
         # Preset cycling/toggle guards for panels
         acpe, _ = set_db.get_variable('APPLE_CYCLE_PRESETS_ENABLED')
         self.apple_cycle_presets_enabled = True if acpe is None else _to_bool(acpe)
