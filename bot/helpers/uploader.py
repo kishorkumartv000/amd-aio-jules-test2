@@ -274,7 +274,7 @@ async def album_upload(metadata, user):
         else:
             # Send a header message before uploading individual tracks
             header_caption = await format_string(
-                "💿 **{album}**\n👤 {artist}\n🎧 {provider}",
+                "💿 <b>{album}</b>\n👤 {artist}\n🎧 {provider}",
                 {
                     'album': metadata['title'],
                     'artist': metadata['artist'],
@@ -471,7 +471,7 @@ async def playlist_upload(metadata, user):
         else:
             # Send a header message before uploading individual tracks
             header_caption = await format_string(
-                "🎵 **{title}**\n👤 Curated by {artist}\n🎧 {provider} Playlist",
+                "🎵 <b>{title}</b>\n👤 Curated by {artist}\n🎧 {provider} Playlist",
                 {
                     'title': metadata['title'],
                     'artist': metadata.get('artist', 'Various Artists'),
