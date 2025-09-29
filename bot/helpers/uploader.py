@@ -31,30 +31,57 @@ async def track_upload(metadata, user, index: int = None, total: int = None):
         reporter = user.get('progress')
         if reporter:
             await reporter.set_stage("Uploading")
-        await send_message(
-            user,
-            metadata['filepath'],
-            'audio',
-            caption=await format_string(
-                "🎵 **{title}**\n👤 {artist}\n🎧 {provider}",
-                {
-                    'title': metadata['title'],
-                    'artist': metadata['artist'],
-                    'provider': metadata.get('provider', 'Apple Music')
-                }
-            ),
-            meta={
-                'duration': metadata['duration'],
-                'artist': metadata['artist'],
+
+        # --- DUMP CHANNEL LOGIC ---
+        dump_enabled = bot_set.dump_channel_enabled and bot_set.dump_channel_id
+        dump_chat_id = bot_set.dump_channel_id if dump_enabled else None
+        dump_mode = bot_set.dump_channel_mode
+
+        upload_to_user = not (dump_enabled and dump_mode == 'Only')
+        # --- END DUMP LOGIC ---
+
+        caption = await format_string(
+            "🎵 **{title}**\n👤 {artist}\n🎧 {provider}",
+            {
                 'title': metadata['title'],
-                'thumbnail': metadata['thumbnail']
-            },
-            progress_reporter=reporter,
-            progress_label="Uploading",
-            file_index=index,
-            total_files=total,
-            cancel_event=user.get('cancel_event')
+                'artist': metadata['artist'],
+                'provider': metadata.get('provider', 'Apple Music')
+            }
         )
+        meta_args = {
+            'duration': metadata['duration'],
+            'artist': metadata['artist'],
+            'title': metadata['title'],
+            'thumbnail': metadata['thumbnail']
+        }
+
+        if upload_to_user:
+            await send_message(
+                user,
+                metadata['filepath'],
+                'audio',
+                caption=caption,
+                meta=meta_args,
+                progress_reporter=reporter,
+                progress_label="Uploading",
+                file_index=index,
+                total_files=total,
+                cancel_event=user.get('cancel_event')
+            )
+
+        if dump_enabled:
+            dump_user = user.copy()
+            dump_user['r_id'] = None # Don't reply in dump channel
+            await send_message(
+                dump_user,
+                metadata['filepath'],
+                'audio',
+                caption=caption,
+                meta=meta_args,
+                chat_id=dump_chat_id,
+                cancel_event=user.get('cancel_event')
+            )
+
     elif bot_set.upload_mode == 'RCLONE':
         rclone_link, index_link, remote_info = await rclone_upload(user, metadata['filepath'], base_path)
         text = await format_string(
@@ -96,27 +123,52 @@ async def music_video_upload(metadata, user):
         reporter = user.get('progress')
         if reporter:
             await reporter.set_stage("Uploading")
-        # Decide media type based on setting
+
+        # --- DUMP CHANNEL LOGIC ---
+        dump_enabled = bot_set.dump_channel_enabled and bot_set.dump_channel_id
+        dump_chat_id = bot_set.dump_channel_id if dump_enabled else None
+        dump_mode = bot_set.dump_channel_mode
+
+        upload_to_user = not (dump_enabled and dump_mode == 'Only')
+        # --- END DUMP LOGIC ---
+
         send_type = 'doc' if getattr(bot_set, 'video_as_document', False) else 'video'
-        await send_message(
-            user,
-            metadata['filepath'],
-            send_type,
-            caption=await format_string(
-                "🎬 **{title}**\n👤 {artist}\n🎧 {provider} Music Video",
-                {
-                    'title': metadata['title'],
-                    'artist': metadata['artist'],
-                    'provider': metadata.get('provider', 'Apple Music')
-                }
-            ),
-            meta=metadata,  # PASS METADATA HERE
-            progress_reporter=reporter,
-            progress_label="Uploading",
-            file_index=1,
-            total_files=1,
-            cancel_event=user.get('cancel_event')
+        caption = await format_string(
+            "🎬 **{title}**\n👤 {artist}\n🎧 {provider} Music Video",
+            {
+                'title': metadata['title'],
+                'artist': metadata['artist'],
+                'provider': metadata.get('provider', 'Apple Music')
+            }
         )
+
+        if upload_to_user:
+            await send_message(
+                user,
+                metadata['filepath'],
+                send_type,
+                caption=caption,
+                meta=metadata,
+                progress_reporter=reporter,
+                progress_label="Uploading",
+                file_index=1,
+                total_files=1,
+                cancel_event=user.get('cancel_event')
+            )
+
+        if dump_enabled:
+            dump_user = user.copy()
+            dump_user['r_id'] = None
+            await send_message(
+                dump_user,
+                metadata['filepath'],
+                send_type,
+                caption=caption,
+                meta=metadata,
+                chat_id=dump_chat_id,
+                cancel_event=user.get('cancel_event')
+            )
+
     elif bot_set.upload_mode == 'RCLONE':
         rclone_link, index_link, remote_info = await rclone_upload(user, metadata['filepath'], base_path)
         text = await format_string(
@@ -143,10 +195,6 @@ async def music_video_upload(metadata, user):
 
 async def _get_folder_size(folder_path: str) -> int:
     total_size = 0
-    # os.walk is synchronous, but the I/O bound part is getsize.
-    # We can collect all file paths first and then get sizes concurrently.
-    # However, for simplicity and to avoid holding many paths in memory,
-    # we will make each getsize call non-blocking sequentially.
     for root, _, files in os.walk(folder_path):
         for f in files:
             try:
@@ -164,7 +212,6 @@ async def album_upload(metadata, user):
         metadata: Album metadata
         user: User details
     """
-    # Determine base path for different providers
     if "Apple Music" in metadata['folderpath']:
         base_path = os.path.join(Config.LOCAL_STORAGE, str(user['user_id']), "Apple Music")
     else:
@@ -172,18 +219,14 @@ async def album_upload(metadata, user):
     
     if bot_set.upload_mode == 'Telegram':
         reporter = user.get('progress')
-        # Use Apple-specific toggle; do not rely on core
         use_zip = bool(getattr(bot_set, 'apple_album_zip', False))
         if use_zip:
-            # Decide zipping strategy based on folder size and Telegram limits
             total_size = await _get_folder_size(metadata['folderpath'])
             zip_paths = []
             if total_size > MAX_SIZE:
-                # Split into multiple zips for Telegram
                 z = await zip_handler(metadata['folderpath'])
                 zip_paths = z if isinstance(z, list) else [z]
             else:
-                # Single descriptive zip with progress
                 zip_path = await create_apple_zip(
                     metadata['folderpath'], 
                     user['user_id'],
@@ -193,7 +236,6 @@ async def album_upload(metadata, user):
                 )
                 zip_paths = [zip_path]
             
-            # Create caption with provider info
             caption = await format_string(
                 "💿 **{album}**\n👤 {artist}\n🎧 {provider}",
                 {
@@ -203,29 +245,38 @@ async def album_upload(metadata, user):
                 }
             )
             
+            # --- DUMP CHANNEL LOGIC ---
+            dump_enabled = bot_set.dump_channel_enabled and bot_set.dump_channel_id
+            dump_chat_id = bot_set.dump_channel_id if dump_enabled else None
+            dump_mode = bot_set.dump_channel_mode
+            upload_to_user = not (dump_enabled and dump_mode == 'Only')
+            # --- END DUMP LOGIC ---
+
             total_parts = len(zip_paths)
             for idx, zp in enumerate(zip_paths, start=1):
-                await send_message(
-                    user,
-                    zp,
-                    'doc',
-                    caption=caption,
-                    progress_reporter=reporter,
-                    progress_label="Uploading",
-                    file_index=idx,
-                    total_files=total_parts
-                )
-                # Clean up zip file after upload
+                if upload_to_user:
+                    await send_message(
+                        user, zp, 'doc', caption=caption,
+                        progress_reporter=reporter, progress_label="Uploading",
+                        file_index=idx, total_files=total_parts
+                    )
+                if dump_enabled:
+                    dump_user = user.copy()
+                    dump_user['r_id'] = None
+                    await send_message(
+                        dump_user, zp, 'doc', caption=caption, chat_id=dump_chat_id
+                    )
+
                 try:
                     await asyncio.to_thread(os.remove, zp)
                 except Exception as e:
                     LOGGER.error(f"Error during zip cleanup for album {metadata.get('title')}: {e}")
         else:
-            # Upload tracks individually
             tracks = metadata.get('tracks') or metadata.get('items', [])
             total_tracks = len(tracks)
             for idx, track in enumerate(tracks, start=1):
                 await track_upload(track, user, index=idx, total=total_tracks)
+
     elif bot_set.upload_mode == 'RCLONE':
         rclone_link, index_link, remote_info = await rclone_upload(user, metadata['folderpath'], base_path)
         text = await format_string(
@@ -246,17 +297,12 @@ async def album_upload(metadata, user):
             await send_message(user, text)
         await _post_rclone_manage_button(user, remote_info)
     
-    # Cleanup
     shutil.rmtree(metadata['folderpath'])
 
 async def artist_upload(metadata, user):
     """
     Upload an artist's content
-    Args:
-        metadata: Artist metadata
-        user: User details
     """
-    # Determine base path for different providers
     if "Apple Music" in metadata['folderpath']:
         base_path = os.path.join(Config.LOCAL_STORAGE, str(user['user_id']), "Apple Music")
     else:
@@ -265,7 +311,6 @@ async def artist_upload(metadata, user):
     if bot_set.upload_mode == 'Telegram':
         reporter = user.get('progress')
         if bot_set.artist_zip:
-            # Decide zipping strategy based on size
             total_size = await _get_folder_size(metadata['folderpath'])
             zip_paths = []
             if total_size > MAX_SIZE:
@@ -281,7 +326,6 @@ async def artist_upload(metadata, user):
                 )
                 zip_paths = [zip_path]
             
-            # Create caption with provider info
             caption = await format_string(
                 "🎤 **{artist}**\n🎧 {provider} Discography",
                 {
@@ -290,24 +334,32 @@ async def artist_upload(metadata, user):
                 }
             )
             
+            # --- DUMP CHANNEL LOGIC ---
+            dump_enabled = bot_set.dump_channel_enabled and bot_set.dump_channel_id
+            dump_chat_id = bot_set.dump_channel_id if dump_enabled else None
+            dump_mode = bot_set.dump_channel_mode
+            upload_to_user = not (dump_enabled and dump_mode == 'Only')
+            # --- END DUMP LOGIC ---
+
             total_parts = len(zip_paths)
             for idx, zp in enumerate(zip_paths, start=1):
-                await send_message(
-                    user,
-                    zp,
-                    'doc',
-                    caption=caption,
-                    progress_reporter=reporter,
-                    progress_label="Uploading",
-                    file_index=idx,
-                    total_files=total_parts
-                )
+                if upload_to_user:
+                    await send_message(
+                        user, zp, 'doc', caption=caption,
+                        progress_reporter=reporter, progress_label="Uploading",
+                        file_index=idx, total_files=total_parts
+                    )
+                if dump_enabled:
+                    dump_user = user.copy()
+                    dump_user['r_id'] = None
+                    await send_message(
+                        dump_user, zp, 'doc', caption=caption, chat_id=dump_chat_id
+                    )
                 try:
                     await asyncio.to_thread(os.remove, zp)
                 except Exception as e:
                     LOGGER.error(f"Error during zip cleanup for artist {metadata.get('title')}: {e}")
         else:
-            # Upload albums or tracks individually
             if 'albums' in metadata:
                 for album in metadata['albums']:
                     await album_upload(album, user)
@@ -316,6 +368,7 @@ async def artist_upload(metadata, user):
                 total_tracks = len(tracks)
                 for idx, track in enumerate(tracks, start=1):
                     await track_upload(track, user, index=idx, total=total_tracks)
+
     elif bot_set.upload_mode == 'RCLONE':
         rclone_link, index_link, remote_info = await rclone_upload(user, metadata['folderpath'], base_path)
         text = await format_string(
@@ -331,17 +384,12 @@ async def artist_upload(metadata, user):
         await send_message(user, text)
         await _post_rclone_manage_button(user, remote_info)
     
-    # Cleanup
     shutil.rmtree(metadata['folderpath'])
 
 async def playlist_upload(metadata, user):
     """
     Upload a playlist
-    Args:
-        metadata: Playlist metadata
-        user: User details
     """
-    # Determine base path for different providers
     if "Apple Music" in metadata['folderpath']:
         base_path = os.path.join(Config.LOCAL_STORAGE, str(user['user_id']), "Apple Music")
     else:
@@ -349,17 +397,14 @@ async def playlist_upload(metadata, user):
     
     if bot_set.upload_mode == 'Telegram':
         reporter = user.get('progress')
-        # Use Apple-specific toggle; do not rely on core
         use_zip = bool(getattr(bot_set, 'apple_playlist_zip', False))
         if use_zip:
-            # Decide zipping strategy based on size
             total_size = await _get_folder_size(metadata['folderpath'])
             zip_paths = []
             if total_size > MAX_SIZE:
                 z = await zip_handler(metadata['folderpath'])
                 zip_paths = z if isinstance(z, list) else [z]
             else:
-                # Create descriptive zip file
                 zip_path = await create_apple_zip(
                     metadata['folderpath'], 
                     user['user_id'],
@@ -369,7 +414,6 @@ async def playlist_upload(metadata, user):
                 )
                 zip_paths = [zip_path]
             
-            # Create caption with provider info
             caption = await format_string(
                 "🎵 **{title}**\n👤 Curated by {artist}\n🎧 {provider} Playlist",
                 {
@@ -379,28 +423,37 @@ async def playlist_upload(metadata, user):
                 }
             )
             
+            # --- DUMP CHANNEL LOGIC ---
+            dump_enabled = bot_set.dump_channel_enabled and bot_set.dump_channel_id
+            dump_chat_id = bot_set.dump_channel_id if dump_enabled else None
+            dump_mode = bot_set.dump_channel_mode
+            upload_to_user = not (dump_enabled and dump_mode == 'Only')
+            # --- END DUMP LOGIC ---
+
             total_parts = len(zip_paths)
             for idx, zp in enumerate(zip_paths, start=1):
-                await send_message(
-                    user,
-                    zp,
-                    'doc',
-                    caption=caption,
-                    progress_reporter=reporter,
-                    progress_label="Uploading",
-                    file_index=idx,
-                    total_files=total_parts
-                )
+                if upload_to_user:
+                    await send_message(
+                        user, zp, 'doc', caption=caption,
+                        progress_reporter=reporter, progress_label="Uploading",
+                        file_index=idx, total_files=total_parts
+                    )
+                if dump_enabled:
+                    dump_user = user.copy()
+                    dump_user['r_id'] = None
+                    await send_message(
+                        dump_user, zp, 'doc', caption=caption, chat_id=dump_chat_id
+                    )
                 try:
                     await asyncio.to_thread(os.remove, zp)
                 except Exception as e:
                     LOGGER.error(f"Error during zip cleanup for playlist {metadata.get('title')}: {e}")
         else:
-            # Upload tracks individually
             tracks = metadata.get('tracks') or metadata.get('items', [])
             total_tracks = len(tracks)
             for idx, track in enumerate(tracks, start=1):
                 await track_upload(track, user, index=idx, total=total_tracks)
+
     elif bot_set.upload_mode == 'RCLONE':
         rclone_link, index_link, remote_info = await rclone_upload(user, metadata['folderpath'], base_path)
         text = await format_string(
@@ -417,7 +470,6 @@ async def playlist_upload(metadata, user):
         await send_message(user, text)
         await _post_rclone_manage_button(user, remote_info)
     
-    # Cleanup
     shutil.rmtree(metadata['folderpath'])
 
 async def rclone_upload(user, path, base_path):

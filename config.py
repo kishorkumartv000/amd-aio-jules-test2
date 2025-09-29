@@ -109,6 +109,11 @@ class Config:
     # New: control whether to extract embedded cover art from files (default OFF)
     EXTRACT_EMBEDDED_COVER = getenv("EXTRACT_EMBEDDED_COVER", "False")      # True or False
 
+    # Dump Channel Configuration
+    DUMP_CHANNEL_ENABLED = getenv("DUMP_CHANNEL_ENABLED", "False")          # True or False
+    DUMP_CHANNEL_MODE    = getenv("DUMP_CHANNEL_MODE", "Both")              # "Both" or "Only"
+    DUMP_CHANNEL_ID      = getenv("DUMP_CHANNEL_ID", None)                   # Channel ID (int)
+
     # Apple Wrapper Scripts
     APPLE_WRAPPER_SETUP_PATH = getenv("APPLE_WRAPPER_SETUP_PATH", "/usr/src/app/downloader/setup_wrapper.sh")
     APPLE_WRAPPER_STOP_PATH  = getenv("APPLE_WRAPPER_STOP_PATH", "/usr/src/app/downloader/stop_wrapper.sh")

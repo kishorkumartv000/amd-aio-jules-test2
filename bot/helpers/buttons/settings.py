@@ -130,6 +130,39 @@ def core_buttons():
             )
         ])
 
+    # Dump Channel Buttons
+    inline_keyboard.append(
+        [
+            InlineKeyboardButton(
+                text=f"Dump to Channel: {'ON' if bot_set.dump_channel_enabled else 'OFF'}",
+                callback_data='toggleDumpChannel'
+            )
+        ]
+    )
+    if bot_set.dump_channel_enabled:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=f"Dump Mode: {bot_set.dump_channel_mode}",
+                    callback_data='toggleDumpMode'
+                ),
+                InlineKeyboardButton(
+                    text="Set Dump Channel",
+                    callback_data='setDumpChannel'
+                )
+            ]
+        )
+        # Display current dump channel ID if set
+        if bot_set.dump_channel_id:
+            inline_keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"Current Dump ID: {bot_set.dump_channel_id}",
+                        callback_data='noop' # No action on click
+                    )
+                ]
+            )
+
     inline_keyboard += [
         [
             InlineKeyboardButton(
