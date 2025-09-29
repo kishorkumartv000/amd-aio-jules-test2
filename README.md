@@ -112,6 +112,26 @@ sudo docker run -d --env-file .env --name siesta project-siesta
 - `TRACK_NAME_FORMAT` - Naming format for tracks (check [metadata](https://github.com/vinayak-7-0-3/Project-Siesta/blob/2bbea8572d660a92bb182a360e91791583f4523b/bot/helpers/metadata.py#L16) section for tags supported) `(str)`
 - `PLAYLIST_NAME_FORMAT` - Similar to `TRACK_NAME_FORMAT` but for Playlists (Note: all tags might not be available) `(str)`
 - `TIDAL_NG_DOWNLOAD_PATH` - Overrides the download path for the Tidal NG provider. If set, all Tidal NG downloads will be saved here, bypassing other settings. `(str)`
+- `DUMP_CHANNEL_ID` - Optional: The ID of a channel where the bot will send a copy of all completed downloads. `(int)`
+
+## Core Bot Features
+
+### Dump Channel
+
+This feature allows the bot to automatically send a copy of every successfully downloaded track, album, or playlist to a specified "dump" channel. This is useful for creating a centralized archive of all downloaded media.
+
+- **Location**: `Settings -> Core`
+
+#### Configuration
+
+1.  **`Dump to Channel: [ON/OFF]`**: The main toggle to enable or disable the feature.
+2.  **`Dump Mode: [Both/Only]`**: This button appears when the feature is ON.
+    -   **`Both`**: The bot will send the media to the user who requested it **and** send a copy to the dump channel.
+    -   **`Only`**: The bot will **only** send the media to the dump channel. The user who made the request will not receive a direct upload.
+3.  **`Set Dump Channel`**: An interactive button to configure the channel ID.
+    -   After tapping, simply **forward any message** from your desired dump channel to the bot. The bot will automatically extract the channel ID and save it.
+
+You can also set the `DUMP_CHANNEL_ID` in your environment variables as a fallback.
 
 ## CREDITS
 - OrpheusDL - https://github.com/yarrm80s/orpheusdl
